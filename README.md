@@ -1,5 +1,9 @@
 # Claude Code Memory
 
+[![npm version](https://img.shields.io/npm/v/claude-code-memory-explorer)](https://www.npmjs.com/package/claude-code-memory-explorer)
+[![license](https://img.shields.io/npm/l/claude-code-memory-explorer)](LICENSE)
+[![npm downloads](https://img.shields.io/npm/dm/claude-code-memory-explorer)](https://www.npmjs.com/package/claude-code-memory-explorer)
+
 > See everything Claude Code knows about your project — CLAUDE.md files, rules, auto memory, and imports.
 
 ## Getting Started
@@ -11,6 +15,9 @@ npx claude-code-memory-explorer --open
 Open http://localhost:3459 (or use `--open` to auto-launch the browser).
 
 That's it. No config — the dashboard reads your existing Claude Code memory files.
+
+![Dark theme](assets/main-dark.png)
+![Light theme](assets/main-light.png)
 
 ## Features
 

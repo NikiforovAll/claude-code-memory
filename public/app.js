@@ -432,9 +432,6 @@ async function renderPreview() {
       html += `<span class="tag-badge">${esc(k)}: ${esc(String(val))}</span>`;
     }
   }
-  if (source.scope === 'memory' && source.load === 'startup' && source.maxLines) {
-    html += `<span class="tag-badge">${source.lines}/${source.maxLines} lines used</span>`;
-  }
   html += '</div>';
 
   // Imports — only show children (files that have this source as parent)
