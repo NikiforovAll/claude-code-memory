@@ -5,7 +5,7 @@
 ## Getting Started
 
 ```bash
-npx claude-memory-explorer --open
+npx claude-code-memory-explorer --open
 ```
 
 Open http://localhost:3459 (or use `--open` to auto-launch the browser).
@@ -28,10 +28,10 @@ That's it. No config — the dashboard reads your existing Claude Code memory fi
 ## Configuration
 
 ```bash
-PORT=8080 npx claude-memory-explorer              # Custom port
-npx claude-memory-explorer --open                 # Auto-open browser
-npx claude-memory-explorer --dir=~/.claude-work   # Custom Claude config dir
-npx claude-memory-explorer --project=/path/to/project  # Specify project path
+PORT=8080 npx claude-code-memory-explorer              # Custom port
+npx claude-code-memory-explorer --open                 # Auto-open browser
+npx claude-code-memory-explorer --dir=~/.claude-work   # Custom Claude config dir
+npx claude-code-memory-explorer --project=/path/to/project  # Specify project path
 ```
 
 If port 3459 is in use, the server falls back to a random available port.
@@ -39,8 +39,8 @@ If port 3459 is in use, the server falls back to a random available port.
 ### Global install
 
 ```bash
-npm install -g claude-memory-explorer
-claude-memory-explorer --open
+npm install -g claude-code-memory-explorer
+claude-code-memory-explorer --open
 ```
 
 ## How It Works
