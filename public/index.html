@@ -23,7 +23,7 @@
 <body>
   <div class="topbar">
     <div class="topbar-logo">
-      <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 20 12 22c0-2-1-2.5-3-4.5S5 12 5 9a7 7 0 017-7z"/><circle cx="12" cy="9" r="2"/></svg></div>
+      <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"/><path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"/></svg></div>
       <span class="logo-text">Memory</span>
     </div>
     <div class="spacer"></div>
@@ -31,15 +31,13 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
       <span id="projectName">Loading...</span>
     </div>
-    <button class="topbar-btn" id="refreshBtn" title="Refresh data" onclick="refreshData()">
+    <button class="topbar-btn" id="refreshBtn" title="Refresh (r)" onclick="refreshData()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
-      Refresh
     </button>
     <button class="topbar-btn" id="helpBtn" title="Keyboard shortcuts (?)" onclick="toggleHelpModal()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
-      <kbd style="font-size:10px">?</kbd>
     </button>
-    <button class="topbar-btn" id="themeBtn" title="Toggle theme" onclick="toggleTheme()">
+    <button class="topbar-btn" id="themeBtn" title="Toggle theme (t)" onclick="toggleTheme()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
   </div>
@@ -62,10 +60,11 @@
         <div class="loading-state"><div class="loading-spinner"></div></div>
       </div>
     </div>
+    <div class="resize-handle" id="resizeHandle"></div>
     <div class="preview-panel" id="previewPanel">
       <div class="preview-empty">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
-          <path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 20 12 22c0-2-1-2.5-3-4.5S5 12 5 9a7 7 0 017-7z"/>
+          <ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"/><path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"/>
         </svg>
         <span>Select a file to preview</span>
       </div>
@@ -119,6 +118,8 @@
             <table class="shortcut-table">
               <tr><td><kbd>j</kbd> / <kbd>&darr;</kbd></td><td>Next item</td></tr>
               <tr><td><kbd>k</kbd> / <kbd>&uarr;</kbd></td><td>Previous item</td></tr>
+              <tr><td><kbd>h</kbd> / <kbd>&larr;</kbd></td><td>Previous group</td></tr>
+              <tr><td><kbd>l</kbd> / <kbd>&rarr;</kbd></td><td>Next group</td></tr>
               <tr><td><kbd>Enter</kbd></td><td>Select item</td></tr>
               <tr><td><kbd>Esc</kbd></td><td>Close modal</td></tr>
             </table>
@@ -129,7 +130,7 @@
               <tr><td><kbd>r</kbd></td><td>Refresh data</td></tr>
               <tr><td><kbd>t</kbd></td><td>Toggle theme</td></tr>
               <tr><td><kbd>e</kbd></td><td>Open in editor</td></tr>
-              <tr><td><kbd>/</kbd></td><td>Focus filter</td></tr>
+              <tr><td><kbd>Shift+P</kbd></td><td>Switch project</td></tr>
               <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
             </table>
           </div>

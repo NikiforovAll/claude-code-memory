@@ -57,6 +57,35 @@ function highlightSource(text, fileName) {
   return esc(text);
 }
 
+function linkifyImports(text, sourceId) {
+  if (!stackData.length) return { text, placeholders: [] };
+  const byName = Object.fromEntries(stackData.map(c => [c.name, c]));
+  const placeholders = [];
+  const ph = (child, display) => {
+    const token = `\x00LINK${placeholders.length}\x00`;
+    placeholders.push(`<a class="inline-import" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(display)}</a>`);
+    return token;
+  };
+  // Replace @path refs with placeholders
+  text = text.replace(/@([\w./-]+\.md)\b/g, (_m, ref) => {
+    const child = byName[ref.split('/').pop()];
+    return child ? `@${ph(child, ref)}` : _m;
+  });
+  // Replace markdown [text](file.md) link targets with placeholders
+  text = text.replace(/(\[[^\]]*\]\()((?!https?:\/\/)[^)]+\.md)(\))/g, (_m, pre, ref, post) => {
+    const child = byName[ref.split('/').pop()];
+    return child ? `${pre}${ph(child, ref)}${post}` : _m;
+  });
+  return { text, placeholders };
+}
+
+function restorePlaceholders(html, placeholders) {
+  for (let i = 0; i < placeholders.length; i++) {
+    html = html.replaceAll(`\x00LINK${i}\x00`, placeholders[i]);
+  }
+  return html;
+}
+
 // #endregion HIGHLIGHT
 
 // #region THEME
@@ -225,7 +254,7 @@ const LOAD_ICONS = {
   startup: '\u25D2',
   conditional: '\u25CB',
   ondemand: '\u25CC',
-  import: '\u2192',
+  import: '@',
 };
 const LOAD_TITLES = {
   always: 'Always loaded',
@@ -235,14 +264,10 @@ const LOAD_TITLES = {
   import: 'Imported by parent file',
 };
 
-function renderTree() {
-  const container = document.getElementById('treeContent');
-  if (!stackData.length) {
-    container.innerHTML =
-      '<div class="loading-state" style="padding:20px;font-size:11px;color:var(--text-muted)">No memory sources found</div>';
-    return;
-  }
+let treeIndex = null;
 
+function getTreeIndex() {
+  if (treeIndex) return treeIndex;
   const groups = {};
   const childrenOf = {};
   for (const s of stackData) {
@@ -254,14 +279,40 @@ function renderTree() {
       groups[s.scope].push(s);
     }
   }
+  const navOrder = [];
+  function collect(item) {
+    navOrder.push(item);
+    const children = childrenOf[item.id];
+    if (children) for (const c of children) collect(c);
+  }
+  for (const scope of SCOPE_ORDER) {
+    const items = groups[scope];
+    if (items) for (const item of items) collect(item);
+  }
+  treeIndex = { groups, childrenOf, navOrder };
+  return treeIndex;
+}
+
+function invalidateTreeIndex() { treeIndex = null; }
+
+function renderTree() {
+  const container = document.getElementById('treeContent');
+  if (!stackData.length) {
+    container.innerHTML =
+      '<div class="loading-state" style="padding:20px;font-size:11px;color:var(--text-muted)">No memory sources found</div>';
+    return;
+  }
+
+  const { groups, childrenOf } = getTreeIndex();
 
   function renderItem(item, indent) {
     const sel = selectedFileId === item.id ? ' selected' : '';
     const loadIcon = LOAD_ICONS[item.load] || '';
     const loadTitle = LOAD_TITLES[item.load] || item.load;
     const meta = `${item.lines}L`;
+    const isConditional = item.load === 'conditional' || item.load === 'ondemand';
     const pad = indent ? ' style="padding-left:' + (12 + indent * 16) + 'px"' : '';
-    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escJs(item.id)}')"${pad}>`;
+    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escJs(item.id)}')"${pad}>`;
     h += `<span class="load-icon" title="${loadTitle}" style="color:var(--scope-${item.scope})">${loadIcon}</span>`;
     h += `<span class="file-name">${esc(item.name)}</span>`;
     h += `<span class="file-meta">${meta}</span>`;
@@ -284,32 +335,63 @@ function renderTree() {
   container.innerHTML = html;
 }
 
-function selectFile(id) {
+function pushFileState(id) {
+  const url = id ? `#${encodeURIComponent(id)}` : location.pathname;
+  history.pushState({ fileId: id }, '', url);
+}
+
+function selectFile(id, pushState = true) {
   selectedFileId = selectedFileId === id ? null : id;
+  if (pushState) pushFileState(selectedFileId);
   renderTree();
   renderPreview();
 }
 
-function getSelectedIndex() {
-  if (!stackData.length) return -1;
-  return stackData.findIndex((s) => s.id === selectedFileId);
+function scrollToSelected() {
+  const el = document.querySelector(`.tree-item[data-id="${selectedFileId}"]`);
+  if (el) el.scrollIntoView({ block: 'nearest' });
 }
 
 function navigateTree(direction) {
-  if (!stackData.length) return;
-  let idx = getSelectedIndex();
+  const { navOrder } = getTreeIndex();
+  if (!navOrder.length) return;
+  let idx = navOrder.findIndex((s) => s.id === selectedFileId);
   if (idx === -1) {
-    idx = direction > 0 ? 0 : stackData.length - 1;
+    idx = direction > 0 ? 0 : navOrder.length - 1;
   } else {
     idx += direction;
-    if (idx < 0) idx = stackData.length - 1;
-    if (idx >= stackData.length) idx = 0;
+    if (idx < 0) idx = navOrder.length - 1;
+    if (idx >= navOrder.length) idx = 0;
   }
-  selectedFileId = stackData[idx].id;
+  selectedFileId = navOrder[idx].id;
+  pushFileState(selectedFileId);
   renderTree();
   renderPreview();
-  const el = document.querySelector(`.tree-item[data-id="${selectedFileId}"]`);
-  if (el) el.scrollIntoView({ block: 'nearest' });
+  scrollToSelected();
+}
+
+function navigateGroup(direction) {
+  const { groups } = getTreeIndex();
+  const activeScopes = SCOPE_ORDER.filter((sc) => groups[sc]?.length);
+  if (!activeScopes.length) return;
+
+  const current = stackData.find((s) => s.id === selectedFileId);
+  const currentScope = current?.parentId
+    ? stackData.find((s) => s.id === current.parentId)?.scope
+    : current?.scope;
+  let scopeIdx = activeScopes.indexOf(currentScope);
+  if (scopeIdx === -1) {
+    scopeIdx = direction > 0 ? 0 : activeScopes.length - 1;
+  } else {
+    scopeIdx += direction;
+    if (scopeIdx < 0) scopeIdx = activeScopes.length - 1;
+    if (scopeIdx >= activeScopes.length) scopeIdx = 0;
+  }
+  selectedFileId = groups[activeScopes[scopeIdx]][0].id;
+  pushFileState(selectedFileId);
+  renderTree();
+  renderPreview();
+  scrollToSelected();
 }
 
 // #endregion RENDER_TREE
@@ -321,7 +403,7 @@ async function renderPreview() {
   const source = stackData.find((s) => s.id === selectedFileId);
   if (!source) {
     panel.innerHTML =
-      '<div class="preview-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 20 12 22c0-2-1-2.5-3-4.5S5 12 5 9a7 7 0 017-7z"/></svg><span>Select a file to preview</span></div>';
+      '<div class="preview-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"/><path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"/></svg><span>Select a file to preview</span></div>';
     return;
   }
 
@@ -337,7 +419,7 @@ async function renderPreview() {
   html += '<div class="preview-title">';
   html += `<span class="scope-badge scope-${source.scope}">${esc(source.scope)}</span>`;
   html += `<span class="file-path">${esc(source.name)}</span>`;
-  html += `<button class="action-btn small" onclick="openInEditor('${escJs(source.path)}')" title="Open in VS Code">Open</button>`;
+  html += `<button class="action-btn small" onclick="openInEditor('${escJs(source.path)}')" title="Open in VS Code"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M17.583 2.207a1.1 1.1 0 0 1 1.541.033l2.636 2.636a1.1 1.1 0 0 1 .033 1.541L10.68 17.53a1.1 1.1 0 0 1-.345.247l-4.56 1.903a.55.55 0 0 1-.725-.725l1.903-4.56a1.1 1.1 0 0 1 .247-.345zm.902 1.87-8.794 8.793-.946 2.268 2.268-.946 8.794-8.793z"/></svg></button>`;
   html += '</div>';
 
   // Badges row
@@ -355,11 +437,16 @@ async function renderPreview() {
   }
   html += '</div>';
 
-  // Imports
-  if (fileData.imports && fileData.imports.length) {
+  // Imports — only show children (files that have this source as parent)
+  const children = stackData.filter(s => s.parentId === source.id);
+  const unresolved = source.unresolvedImports || [];
+  if (children.length || unresolved.length) {
     html += '<div class="preview-imports">';
-    for (const imp of fileData.imports) {
-      html += `<a class="import-link" href="#" onclick="navigateToImport('${escJs(imp)}');return false">@${esc(imp)}</a>`;
+    for (const child of children) {
+      html += `<a class="import-link" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(child.name)}</a>`;
+    }
+    for (const u of unresolved) {
+      html += `<span class="import-link unresolved" title="Not found: ${esc(u)}">⚠ ${esc(u)}</span>`;
     }
     html += '</div>';
   }
@@ -371,22 +458,24 @@ async function renderPreview() {
 
   // Content — with cutoff line for auto memory startup files
   const content = fileData.content || '';
+  const hl = (text) => {
+    const { text: processed, placeholders } = linkifyImports(text, source.id);
+    return restorePlaceholders(highlightSource(processed, source.name), placeholders);
+  };
   if (source.scope === 'memory' && source.load === 'startup' && source.maxLines) {
     const lines = content.split('\n');
     const cutoff = source.maxLines;
     if (lines.length > cutoff) {
       const before = lines.slice(0, cutoff).join('\n');
       const after = lines.slice(cutoff).join('\n');
-      const hlBefore = highlightSource(before, source.name);
-      const hlAfter = highlightSource(after, source.name);
-      html += `<pre class="preview-code"><code>${hlBefore}</code></pre>`;
+      html += `<pre class="preview-code"><code>${hl(before)}</code></pre>`;
       html += `<div class="cutoff-line"><span class="cutoff-label">Cutoff: ${cutoff} lines / loaded at startup</span></div>`;
-      html += `<pre class="preview-code preview-code-faded"><code>${hlAfter}</code></pre>`;
+      html += `<pre class="preview-code preview-code-faded"><code>${hl(after)}</code></pre>`;
     } else {
-      html += `<pre class="preview-code"><code>${highlightSource(content, source.name)}</code></pre>`;
+      html += `<pre class="preview-code"><code>${hl(content)}</code></pre>`;
     }
   } else {
-    html += `<pre class="preview-code"><code>${highlightSource(content, source.name)}</code></pre>`;
+    html += `<pre class="preview-code"><code>${hl(content)}</code></pre>`;
   }
 
   panel.innerHTML = html;
@@ -398,6 +487,7 @@ function formatBytes(b) {
 }
 
 async function openInEditor(filePath) {
+  showToast('Opening...', 'info');
   try {
     const res = await fetch('/api/open-in-editor', {
       method: 'POST',
@@ -407,20 +497,11 @@ async function openInEditor(filePath) {
     if (!res.ok) {
       const err = await res.json();
       showToast(err.error, 'error');
+    } else {
+      showToast('Opened in editor', 'success');
     }
   } catch (err) {
     showToast(err.message, 'error');
-  }
-}
-
-function navigateToImport(importPath) {
-  const source = stackData.find((s) => s.path === importPath);
-  if (source) {
-    selectedFileId = source.id;
-    renderTree();
-    renderPreview();
-  } else {
-    showToast('Import target not in stack: ' + importPath, 'error');
   }
 }
 
@@ -469,6 +550,7 @@ async function loadData() {
       fetchJSON('/api/stack'),
       fetchJSON('/api/summary'),
     ]);
+    invalidateTreeIndex();
     renderTree();
     renderBudget();
     if (!selectedFileId) {
@@ -522,12 +604,18 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key === 't') toggleTheme();
   if (e.key === 'r') refreshData();
-  if (e.key === '?' || e.key === '/') {
+  if (e.key === '?') {
     e.preventDefault();
     toggleHelpModal();
   }
+  if (e.key === 'P' && e.shiftKey) {
+    e.preventDefault();
+    changeProject();
+  }
   if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); navigateTree(1); }
   if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); navigateTree(-1); }
+  if (e.key === 'h' || e.key === 'ArrowLeft') { e.preventDefault(); navigateGroup(-1); }
+  if (e.key === 'l' || e.key === 'ArrowRight') { e.preventDefault(); navigateGroup(1); }
   if (e.key === 'Enter' && selectedFileId) renderPreview();
   if (e.key === 'e' && selectedFileId) {
     const s = stackData.find((x) => x.id === selectedFileId);
@@ -550,15 +638,86 @@ async function detectHub() {
 
 // #endregion HUB_INTEGRATION
 
+// #region RESIZE
+
+function initResize() {
+  const handle = document.getElementById('resizeHandle');
+  const panel = document.getElementById('treePanel');
+  let dragging = false;
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    dragging = true;
+    handle.classList.add('active');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  function onMove(e) {
+    if (!dragging) return;
+    const layout = panel.parentElement;
+    const rect = layout.getBoundingClientRect();
+    const width = Math.max(150, Math.min(e.clientX - rect.left, rect.width * 0.5));
+    panel.style.width = `${width}px`;
+  }
+
+  function onUp() {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('active');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    localStorage.setItem('treePanelWidth', panel.offsetWidth);
+  }
+
+  const saved = localStorage.getItem('treePanelWidth');
+  if (saved) panel.style.width = `${saved}px`;
+}
+
+// #endregion RESIZE
+
 // #region INIT
+
+window.addEventListener('popstate', (e) => {
+  const id = e.state?.fileId || decodeURIComponent(location.hash.slice(1)) || null;
+  selectFile(id, false);
+});
 
 document.addEventListener('DOMContentLoaded', async () => {
   loadTheme();
+  initResize();
   bindModalKeys('projectPathInput', 'projectPickerModal', submitProjectPicker);
   await detectHub();
+  // Handle ?project= query param
+  const params = new URLSearchParams(location.search);
+  if (params.has('project')) {
+    const projectPath = params.get('project');
+    try {
+      const res = await fetch('/api/project', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: projectPath }),
+      });
+      if (!res.ok) showToast('Failed to switch project', 'error');
+    } catch {}
+    params.delete('project');
+    const qs = params.toString();
+    history.replaceState(null, '', qs ? `?${qs}` : location.pathname + location.hash);
+  }
   await loadProject();
   addRecentProject(projectData.path);
   await loadData();
+  // Restore file selection from hash
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (hash && stackData.find(s => s.id === hash)) {
+    selectedFileId = hash;
+    renderTree();
+    renderPreview();
+  }
 });
 
 // #endregion INIT

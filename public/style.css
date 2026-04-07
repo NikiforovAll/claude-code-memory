@@ -19,11 +19,11 @@
   --warning-dim: rgba(240, 180, 41, 0.18);
   --error: #ef4444;
   --error-dim: rgba(239, 68, 68, 0.18);
-  --scope-user: #c4956a;
+  --scope-user: #c08050;
   --scope-project: #7ab5a0;
   --scope-local: #8a9bb5;
   --scope-rule: #a89bc4;
-  --scope-memory: #c4956a;
+  --scope-memory: #c4a06a;
   --scope-policy: #b58a8a;
   --font-mono: 'IBM Plex Mono', monospace;
   --font-serif: 'Playfair Display', serif;
@@ -43,7 +43,7 @@ body {
   font-family: var(--font-sans);
   font-size: 13px;
   line-height: 1.5;
-  height: 100vh;
+  height: calc(100vh / 1.25);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -198,11 +198,27 @@ body {
 }
 .tree-panel {
   width: 260px;
-  min-width: 200px;
+  min-width: 150px;
+  max-width: 50%;
   background: var(--bg-surface);
   border-right: 1px solid var(--border);
   overflow-y: auto;
   flex-shrink: 0;
+}
+.resize-handle {
+  width: 4px;
+  margin-left: -2px;
+  margin-right: -2px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  z-index: 10;
+  position: relative;
+  transition: background 0.15s;
+}
+.resize-handle:hover,
+.resize-handle.active {
+  background: var(--accent);
 }
 .preview-panel {
   flex: 1;
@@ -273,6 +289,8 @@ body {
   flex-shrink: 0;
 }
 .tree-child .file-name { opacity: 0.75; }
+.tree-conditional .file-name { opacity: 0.55; }
+body.light .tree-conditional .file-name { opacity: 0.75; }
 /* #endregion TREE */
 
 /* #region PREVIEW */
@@ -352,6 +370,21 @@ body {
 .import-link:hover {
   text-decoration-style: solid;
 }
+.inline-import {
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  cursor: pointer;
+}
+.inline-import:hover {
+  text-decoration-style: solid;
+}
+.import-link.unresolved {
+  color: var(--text-muted);
+  cursor: default;
+  text-decoration: none;
+  opacity: 0.6;
+}
 .cutoff-line {
   border-top: 2px dashed var(--error);
   margin: 8px 0;
@@ -428,9 +461,9 @@ body {
 .summary-bar {
   background: var(--bg-surface);
   border-top: 1px solid var(--border);
-  padding: 8px 16px;
+  padding: 4px 16px;
   display: flex;
-  gap: 16px;
+  gap: 12px;
   flex-shrink: 0;
 }
 .summary-card {
@@ -440,12 +473,12 @@ body {
 }
 .sc-value {
   font-family: var(--font-mono);
-  font-size: 16px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent);
 }
 .sc-label {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-muted);
   text-transform: uppercase;
 }
@@ -579,9 +612,12 @@ body {
   filter: brightness(1.1);
 }
 .action-btn.small {
-  padding: 2px 8px;
+  padding: 2px 6px;
   font-size: 10px;
   margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .shortcut-section {
   font-size: 11px;
