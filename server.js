@@ -97,6 +97,7 @@ function parseFrontmatter(content) {
 
 function parseImports(content) {
   const imports = [];
+  const softLinks = [];
   // Match @path/to/file.ext — must contain / or \ to be a file path import
   const re = /@(~?[\w./-]+\/[\w./-]+|~\/[\w./-]+)/g;
   let m;
@@ -112,7 +113,12 @@ function parseImports(content) {
   while ((m = re2.exec(content)) !== null) {
     if (!imports.includes(m[1])) imports.push(m[1]);
   }
-  return imports;
+  // Match markdown links [text](path.md) — soft references, don't change load type
+  const re3 = /\[.*?\]\(((?!https?:\/\/)[^)]+\.md)\)/g;
+  while ((m = re3.exec(content)) !== null) {
+    if (!imports.includes(m[1]) && !softLinks.includes(m[1])) softLinks.push(m[1]);
+  }
+  return { imports, softLinks };
 }
 
 function resolveImport(importPath, fromFile) {
@@ -125,14 +131,32 @@ function resolveImport(importPath, fromFile) {
   return resolved;
 }
 
-function resolveExistingImports(filePath, content) {
-  const raw = parseImports(content);
+function resolveAllImports(filePath, content) {
+  const { imports: raw, softLinks } = parseImports(content);
   const resolved = [];
+  const resolvedSoft = [];
+  const unresolved = [];
   for (const imp of raw) {
     const abs = resolveImport(imp, filePath);
     if (fs.existsSync(abs)) resolved.push(abs);
+    else unresolved.push(imp);
   }
-  return resolved;
+  for (const imp of softLinks) {
+    const abs = resolveImport(imp, filePath);
+    if (fs.existsSync(abs)) resolvedSoft.push(abs);
+    else unresolved.push(imp);
+  }
+  return { resolved, resolvedSoft, unresolved };
+}
+
+function resolveExistingImports(filePath, content) {
+  const { resolved, resolvedSoft } = resolveAllImports(filePath, content);
+  return [...resolved, ...resolvedSoft];
+}
+
+function spreadImports(filePath, content) {
+  const { resolved, resolvedSoft, unresolved } = resolveAllImports(filePath, content);
+  return { imports: resolved, softImports: resolvedSoft, unresolvedImports: unresolved };
 }
 
 function discoverMemorySources(projectPath) {
@@ -148,7 +172,7 @@ function discoverMemorySources(projectPath) {
         scope: 'policy',
         load: 'always',
         ...info,
-        imports: resolveExistingImports(info.path, info.content),
+        ...spreadImports(info.path, info.content),
       });
     }
   }
@@ -163,7 +187,7 @@ function discoverMemorySources(projectPath) {
       scope: 'user',
       load: 'always',
       ...userInfo,
-      imports: resolveExistingImports(userInfo.path, userInfo.content),
+      ...spreadImports(userInfo.path, userInfo.content),
     });
   }
 
@@ -173,15 +197,14 @@ function discoverMemorySources(projectPath) {
     for (const file of findMdFiles(userRulesDir)) {
       const info = fileInfo(file);
       if (!info) continue;
-      const hasPathScope = info.frontmatter && info.frontmatter.paths;
       sources.push({
         id: `user-rule-${path.basename(file, '.md')}`,
         name: path.basename(file),
         scope: 'rule',
-        load: hasPathScope ? 'conditional' : 'always',
+        load: 'conditional',
         ...info,
         ruleSource: 'user',
-        imports: resolveExistingImports(info.path, info.content),
+        ...spreadImports(info.path, info.content),
       });
     }
   }
@@ -205,7 +228,7 @@ function discoverMemorySources(projectPath) {
         ...info,
         dir,
         isProjectRoot,
-        imports: resolveExistingImports(info.path, info.content),
+        ...spreadImports(info.path, info.content),
       });
       break;
     }
@@ -222,7 +245,7 @@ function discoverMemorySources(projectPath) {
         load: 'always',
         ...localInfo,
         dir,
-        imports: resolveExistingImports(localInfo.path, localInfo.content),
+        ...spreadImports(localInfo.path, localInfo.content),
       });
     }
   }
@@ -233,15 +256,14 @@ function discoverMemorySources(projectPath) {
     for (const file of findMdFiles(projectRulesDir)) {
       const info = fileInfo(file);
       if (!info) continue;
-      const hasPathScope = info.frontmatter && info.frontmatter.paths;
       sources.push({
         id: `project-rule-${path.basename(file, '.md')}`,
         name: path.basename(file),
         scope: 'rule',
-        load: hasPathScope ? 'conditional' : 'always',
+        load: 'conditional',
         ...info,
         ruleSource: 'project',
-        imports: resolveExistingImports(info.path, info.content),
+        ...spreadImports(info.path, info.content),
       });
     }
   }
@@ -260,7 +282,7 @@ function discoverMemorySources(projectPath) {
         ...memInfo,
         maxLines: 200,
         maxBytes: 25 * 1024,
-        imports: resolveExistingImports(memInfo.path, memInfo.content),
+        ...spreadImports(memInfo.path, memInfo.content),
       });
     }
     for (const file of findMdFiles(memoryDir)) {
@@ -273,23 +295,35 @@ function discoverMemorySources(projectPath) {
         scope: 'memory',
         load: 'ondemand',
         ...info,
-        imports: resolveExistingImports(info.path, info.content),
+        ...spreadImports(info.path, info.content),
       });
     }
   }
 
   // Resolve imports recursively — add imported files as sources if not already present
   const seen = new Set(sources.map(s => s.path));
-  const queue = sources.flatMap(s => (s.imports || []).map(imp => ({ imp, parent: s })));
+  const sourceByPath = Object.fromEntries(sources.map(s => [s.path, s]));
+  // Hard imports (@) get load:'import'; soft imports (markdown links) just reparent
+  const queue = sources.flatMap(s => [
+    ...(s.imports || []).map(imp => ({ imp, parent: s, hard: true })),
+    ...(s.softImports || []).map(imp => ({ imp, parent: s, hard: false })),
+  ]);
   let depth = 0;
   while (queue.length && depth < 5) {
     const batch = queue.splice(0, queue.length);
-    for (const { imp, parent } of batch) {
-      if (seen.has(imp)) continue;
+    for (const { imp, parent, hard } of batch) {
+      if (seen.has(imp)) {
+        const existing = sourceByPath[imp];
+        if (existing && !existing.parentId && existing.scope === 'memory') {
+          existing.parentId = parent.id;
+          if (hard) existing.load = 'import';
+        }
+        continue;
+      }
       seen.add(imp);
       const info = fileInfo(imp);
       if (!info) continue;
-      const imports = resolveExistingImports(imp, info.content);
+      const { resolved: imports, resolvedSoft: softImports, unresolved: unresolvedImports } = resolveAllImports(imp, info.content);
       const source = {
         id: `import-${path.basename(imp, '.md')}-${depth}`,
         name: path.basename(imp),
@@ -299,9 +333,13 @@ function discoverMemorySources(projectPath) {
         importedBy: parent.path,
         parentId: parent.id,
         imports,
+        softImports,
+        unresolvedImports,
       };
       sources.push(source);
-      for (const child of imports) queue.push({ imp: child, parent: source });
+      sourceByPath[imp] = source;
+      for (const child of imports) queue.push({ imp: child, parent: source, hard: true });
+      for (const child of softImports) queue.push({ imp: child, parent: source, hard: false });
     }
     depth++;
   }
@@ -398,7 +436,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/hub-config', (_req, res) => {
   res.json({
-    name: 'Memory Explorer',
+    name: 'Claude Code Memory',
     icon: 'brain',
     description: 'Explore Claude Code memory sources',
   });
@@ -517,7 +555,7 @@ app.get('/api/imports', (req, res) => {
 const server = app.listen(PORT, () => {
   const addr = server.address();
   const port = typeof addr === 'object' ? addr.port : PORT;
-  console.log(`Memory Explorer running at http://localhost:${port}`);
+  console.log(`Claude Code Memory running at http://localhost:${port}`);
   console.log(`Project: ${currentProjectPath}`);
   if (AUTO_OPEN) {
     import('open').then(m => m.default(`http://localhost:${port}`)).catch(() => {});
@@ -530,7 +568,7 @@ server.on('error', (err) => {
     const retry = app.listen(0, () => {
       const addr = retry.address();
       const port = typeof addr === 'object' ? addr.port : '?';
-      console.log(`Memory Explorer running at http://localhost:${port}`);
+      console.log(`Claude Code Memory running at http://localhost:${port}`);
       if (AUTO_OPEN) {
         import('open').then(m => m.default(`http://localhost:${port}`)).catch(() => {});
       }
