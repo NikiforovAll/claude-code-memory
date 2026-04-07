@@ -1,0 +1,14 @@
+{
+  "name": "Claude Code Memory Explorer",
+  "short_name": "Memory",
+  "description": "Explore Claude Code memory sources",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#101114",
+  "background_color": "#101114",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-svg.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

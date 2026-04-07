@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Claude Code Memory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Playfair+Display:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css" id="hljsDark">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css" id="hljsLight" disabled>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" type="image/svg+xml" href="/icons/icon-svg.svg">
+<meta name="theme-color" content="#101114" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#e8e6e3" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-logo">
+      <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 20 12 22c0-2-1-2.5-3-4.5S5 12 5 9a7 7 0 017-7z"/><circle cx="12" cy="9" r="2"/></svg></div>
+      <span class="logo-text">Memory</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="topbar-project" id="projectBtn" onclick="changeProject()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <span id="projectName">Loading...</span>
+    </div>
+    <button class="topbar-btn" id="refreshBtn" title="Refresh data" onclick="refreshData()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+      Refresh
+    </button>
+    <button class="topbar-btn" id="helpBtn" title="Keyboard shortcuts (?)" onclick="toggleHelpModal()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
+      <kbd style="font-size:10px">?</kbd>
+    </button>
+    <button class="topbar-btn" id="themeBtn" title="Toggle theme" onclick="toggleTheme()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+  </div>
+
+  <!-- Size bar -->
+  <div class="budget-bar" id="budgetBar">
+    <div class="budget-label">
+      <span>Memory sources</span>
+      <span class="mono" id="budgetText">0 lines</span>
+    </div>
+    <div class="budget-track">
+      <div class="budget-segments" id="budgetSegments"></div>
+    </div>
+  </div>
+
+  <!-- Main layout -->
+  <div class="main-layout">
+    <div class="tree-panel" id="treePanel">
+      <div class="tree-content" id="treeContent">
+        <div class="loading-state"><div class="loading-spinner"></div></div>
+      </div>
+    </div>
+    <div class="preview-panel" id="previewPanel">
+      <div class="preview-empty">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+          <path d="M12 2a7 7 0 017 7c0 3-2 5.5-4 7.5S12 20 12 22c0-2-1-2.5-3-4.5S5 12 5 9a7 7 0 017-7z"/>
+        </svg>
+        <span>Select a file to preview</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Summary stats -->
+  <div class="summary-bar" id="summaryBar">
+    <div class="summary-card"><span class="sc-value" id="statFiles">-</span><span class="sc-label">Files</span></div>
+    <div class="summary-card"><span class="sc-value" id="statLines">-</span><span class="sc-label">Lines</span></div>
+    <div class="summary-card"><span class="sc-value" id="statBytes">-</span><span class="sc-label">Bytes</span></div>
+    <div class="summary-card"><span class="sc-value" id="statAlways">-</span><span class="sc-label">Always loaded</span></div>
+  </div>
+
+  <!-- Project picker modal -->
+  <div class="modal-overlay" id="projectPickerModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Switch Project</h3>
+        <button class="modal-close" onclick="closeModal('projectPickerModal')">&#10005;</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label>Project directory</label>
+          <input type="text" id="projectPathInput" placeholder="/path/to/project" autocomplete="off">
+          <span class="modal-hint">Full path to the project directory</span>
+        </div>
+        <div id="recentProjectsList"></div>
+        <div class="modal-actions">
+          <button class="action-btn" onclick="closeModal('projectPickerModal')">Cancel</button>
+          <button class="action-btn primary" id="projectPickerSubmit" onclick="submitProjectPicker()">Switch</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Help modal -->
+  <div class="modal-overlay" id="helpModal" onclick="if(event.target===this)toggleHelpModal()">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Memory Explorer</h3>
+        <button class="modal-close" onclick="toggleHelpModal()">&#10005;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Browse and understand all memory sources that influence Claude Code behavior for your project.</p>
+        <hr class="modal-divider">
+        <h4 class="shortcut-section">Keyboard Shortcuts</h4>
+        <div class="shortcut-grid">
+          <div>
+            <h4 class="shortcut-section">Navigation</h4>
+            <table class="shortcut-table">
+              <tr><td><kbd>j</kbd> / <kbd>&darr;</kbd></td><td>Next item</td></tr>
+              <tr><td><kbd>k</kbd> / <kbd>&uarr;</kbd></td><td>Previous item</td></tr>
+              <tr><td><kbd>Enter</kbd></td><td>Select item</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>Close modal</td></tr>
+            </table>
+          </div>
+          <div>
+            <h4 class="shortcut-section">Actions</h4>
+            <table class="shortcut-table">
+              <tr><td><kbd>r</kbd></td><td>Refresh data</td></tr>
+              <tr><td><kbd>t</kbd></td><td>Toggle theme</td></tr>
+              <tr><td><kbd>e</kbd></td><td>Open in editor</td></tr>
+              <tr><td><kbd>/</kbd></td><td>Focus filter</td></tr>
+              <tr><td><kbd>?</kbd></td><td>Show this help</td></tr>
+            </table>
+          </div>
+        </div>
+      </div>
+      <button class="modal-close-btn" onclick="toggleHelpModal()">Close</button>
+    </div>
+  </div>
+
+  <div class="toast-container" id="toast"></div>
+</body>
+</html>
