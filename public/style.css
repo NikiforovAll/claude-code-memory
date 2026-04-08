@@ -130,24 +130,33 @@ body {
   flex: 1;
 }
 .topbar-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   padding: 6px 10px;
   border-radius: 6px;
   font-size: 11px;
   font-weight: 500;
+  cursor: pointer;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
+  transition: all 0.15s ease;
+  white-space: nowrap;
   text-transform: uppercase;
   letter-spacing: 0.03em;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  text-decoration: none;
 }
 .topbar-btn:hover {
   border-color: var(--accent);
   color: var(--text-secondary);
+}
+.topbar-btn svg {
+  color: var(--text-muted);
+}
+.topbar-btn.loading svg {
+  animation: spin 1s linear infinite;
 }
 /* #endregion TOPBAR */
 
@@ -288,9 +297,15 @@ body {
   font-family: var(--font-mono);
   flex-shrink: 0;
 }
-.tree-child .file-name { opacity: 0.75; }
-.tree-conditional .file-name { opacity: 0.55; }
-body.light .tree-conditional .file-name { opacity: 0.75; }
+.tree-child .file-name {
+  opacity: 0.75;
+}
+.tree-conditional .file-name {
+  opacity: 0.55;
+}
+body.light .tree-conditional .file-name {
+  opacity: 0.75;
+}
 /* #endregion TREE */
 
 /* #region PREVIEW */
@@ -752,13 +767,13 @@ kbd {
 body.light {
   --bg-deep: #e8e6e3;
   --bg-surface: #f4f3f1;
-  --bg-elevated: #ffffff;
-  --bg-hover: #e0ddd8;
-  --border: #c5c0b8;
+  --bg-elevated: #dddbd8;
+  --bg-hover: #d2d0cc;
+  --border: #a09b94;
   --text-primary: #0a0a0a;
-  --text-secondary: #333333;
+  --text-secondary: #444444;
   --text-tertiary: #666666;
-  --text-muted: #999999;
+  --text-muted: #888888;
   --accent-text: #b85a20;
 }
 /* #endregion LIGHT_THEME */

@@ -59,11 +59,13 @@ function highlightSource(text, fileName) {
 
 function linkifyImports(text, sourceId) {
   if (!stackData.length) return { text, placeholders: [] };
-  const byName = Object.fromEntries(stackData.map(c => [c.name, c]));
+  const byName = Object.fromEntries(stackData.map((c) => [c.name, c]));
   const placeholders = [];
   const ph = (child, display) => {
     const token = `\x00LINK${placeholders.length}\x00`;
-    placeholders.push(`<a class="inline-import" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(display)}</a>`);
+    placeholders.push(
+      `<a class="inline-import" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(display)}</a>`,
+    );
     return token;
   };
   // Replace @path refs with placeholders
@@ -293,7 +295,9 @@ function getTreeIndex() {
   return treeIndex;
 }
 
-function invalidateTreeIndex() { treeIndex = null; }
+function invalidateTreeIndex() {
+  treeIndex = null;
+}
 
 function renderTree() {
   const container = document.getElementById('treeContent');
@@ -376,9 +380,7 @@ function navigateGroup(direction) {
   if (!activeScopes.length) return;
 
   const current = stackData.find((s) => s.id === selectedFileId);
-  const currentScope = current?.parentId
-    ? stackData.find((s) => s.id === current.parentId)?.scope
-    : current?.scope;
+  const currentScope = current?.parentId ? stackData.find((s) => s.id === current.parentId)?.scope : current?.scope;
   let scopeIdx = activeScopes.indexOf(currentScope);
   if (scopeIdx === -1) {
     scopeIdx = direction > 0 ? 0 : activeScopes.length - 1;
@@ -435,7 +437,7 @@ async function renderPreview() {
   html += '</div>';
 
   // Imports — only show children (files that have this source as parent)
-  const children = stackData.filter(s => s.parentId === source.id);
+  const children = stackData.filter((s) => s.parentId === source.id);
   const unresolved = source.unresolvedImports || [];
   if (children.length || unresolved.length) {
     html += '<div class="preview-imports">';
@@ -516,11 +518,15 @@ function renderBudget() {
   document.getElementById('statAlways').textContent = summaryData.alwaysLoaded;
 
   // Budget text
-  document.getElementById('budgetText').textContent = `${summaryData.totalLines.toLocaleString()} lines / ${formatBytes(summaryData.totalBytes)}`;
+  document.getElementById('budgetText').textContent =
+    `${summaryData.totalLines.toLocaleString()} lines / ${formatBytes(summaryData.totalBytes)}`;
 
   // Budget segments — proportional by lines per scope
   const segContainer = document.getElementById('budgetSegments');
-  if (!stackData.length) { segContainer.innerHTML = ''; return; }
+  if (!stackData.length) {
+    segContainer.innerHTML = '';
+    return;
+  }
 
   const scopeTotals = {};
   for (const s of stackData) {
@@ -543,10 +549,7 @@ function renderBudget() {
 
 async function loadData() {
   try {
-    [stackData, summaryData] = await Promise.all([
-      fetchJSON('/api/stack'),
-      fetchJSON('/api/summary'),
-    ]);
+    [stackData, summaryData] = await Promise.all([fetchJSON('/api/stack'), fetchJSON('/api/summary')]);
     invalidateTreeIndex();
     renderTree();
     renderBudget();
@@ -556,7 +559,10 @@ async function loadData() {
       const auto = proj || user;
       if (auto) selectedFileId = auto.id;
     }
-    if (selectedFileId) { renderTree(); renderPreview(); }
+    if (selectedFileId) {
+      renderTree();
+      renderPreview();
+    }
   } catch (err) {
     showToast('Failed to load: ' + err.message, 'error');
   }
@@ -609,10 +615,22 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     changeProject();
   }
-  if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); navigateTree(1); }
-  if (e.key === 'k' || e.key === 'ArrowUp') { e.preventDefault(); navigateTree(-1); }
-  if (e.key === 'h' || e.key === 'ArrowLeft') { e.preventDefault(); navigateGroup(-1); }
-  if (e.key === 'l' || e.key === 'ArrowRight') { e.preventDefault(); navigateGroup(1); }
+  if (e.key === 'j' || e.key === 'ArrowDown') {
+    e.preventDefault();
+    navigateTree(1);
+  }
+  if (e.key === 'k' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    navigateTree(-1);
+  }
+  if (e.key === 'h' || e.key === 'ArrowLeft') {
+    e.preventDefault();
+    navigateGroup(-1);
+  }
+  if (e.key === 'l' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    navigateGroup(1);
+  }
   if (e.key === 'Enter' && selectedFileId) renderPreview();
   if (e.key === 'e' && selectedFileId) {
     const s = stackData.find((x) => x.id === selectedFileId);
@@ -624,13 +642,27 @@ document.addEventListener('keydown', (e) => {
 
 // #region HUB_INTEGRATION
 
-async function detectHub() {
-  try {
-    const res = await fetch('/hub-config');
-    if (res.ok) window.__HUB__ = true;
-  } catch {
-    /* not in hub */
-  }
+(async function initHub() {
+  const cfg = await fetch('/hub-config')
+    .then((r) => r.json())
+    .catch(() => ({}));
+  if (!cfg.enabled) return;
+  window.__HUB__ = cfg;
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      window.parent?.postMessage({ type: 'hub:keydown', key: e.key }, '*');
+    }
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
+      e.preventDefault();
+      window.parent?.postMessage({ type: 'hub:keydown', key: e.key }, '*');
+    }
+  });
+})();
+
+function hubNavigate(app, url) {
+  if (!window.__HUB__?.enabled) return;
+  window.parent?.postMessage({ type: 'hub:navigate', app, url }, '*');
 }
 
 // #endregion HUB_INTEGRATION
@@ -688,7 +720,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadTheme();
   initResize();
   bindModalKeys('projectPathInput', 'projectPickerModal', submitProjectPicker);
-  await detectHub();
   // Handle ?project= query param
   const params = new URLSearchParams(location.search);
   if (params.has('project')) {
@@ -705,12 +736,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     const qs = params.toString();
     history.replaceState(null, '', qs ? `?${qs}` : location.pathname + location.hash);
   }
-  await loadProject();
-  addRecentProject(projectData.path);
+  // Retry initial load — server may not be ready yet (e.g. Hub iframe race)
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      await loadProject();
+      break;
+    } catch {
+      if (attempt < 4) await new Promise((r) => setTimeout(r, 500));
+      else showToast('Failed to connect to server', 'error');
+    }
+  }
+  if (projectData) addRecentProject(projectData.path);
   await loadData();
   // Restore file selection from hash
   const hash = decodeURIComponent(location.hash.slice(1));
-  if (hash && stackData.find(s => s.id === hash)) {
+  if (hash && stackData.find((s) => s.id === hash)) {
     selectedFileId = hash;
     renderTree();
     renderPreview();

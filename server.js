@@ -250,6 +250,38 @@ function discoverMemorySources(projectPath) {
     }
   }
 
+  // 4b. Scan subdirectories of projectPath for CLAUDE.md (tree-scoped)
+  const SKIP_DIRS = new Set(['node_modules', '.git', '.hg', '.svn', 'dist', 'build', 'out', '.next', '.nuxt', 'vendor', '__pycache__', '.venv', 'venv']);
+  function walkForClaudeMd(dir, depth) {
+    if (depth > 5) return;
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+      const subdir = path.join(dir, entry.name);
+      for (const name of ['CLAUDE.md', '.claude/CLAUDE.md']) {
+        const filePath = path.join(subdir, name);
+        if (seenPaths.has(filePath)) continue;
+        const info = fileInfo(filePath);
+        if (!info) continue;
+        seenPaths.add(filePath);
+        const rel = path.relative(projectPath, subdir).replace(/\\/g, '/');
+        sources.push({
+          id: `project-claude-md-${subdir.replace(/[^a-zA-Z0-9]/g, '-')}`,
+          name: `${rel}/${name.includes('/') ? '.claude/CLAUDE.md' : 'CLAUDE.md'}`,
+          scope: 'project',
+          load: 'tree',
+          ...info,
+          dir: subdir,
+          isProjectRoot: false,
+          ...spreadImports(info.path, info.content),
+        });
+      }
+      walkForClaudeMd(subdir, depth + 1);
+    }
+  }
+  walkForClaudeMd(projectPath, 0);
+
   // 5. Project rules (.claude/rules/*.md)
   const projectRulesDir = path.join(projectPath, '.claude', 'rules');
   if (fs.existsSync(projectRulesDir)) {
@@ -439,6 +471,8 @@ app.get('/hub-config', (_req, res) => {
     name: 'Claude Code Memory',
     icon: 'brain',
     description: 'Explore Claude Code memory sources',
+    enabled: !!process.env.CLAUDE_HUB,
+    url: process.env.HUB_URL || null,
   });
 });
 
