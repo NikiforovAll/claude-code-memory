@@ -120,7 +120,7 @@ body {
   cursor: pointer;
   font-size: 11px;
   font-family: var(--font-mono);
-  max-width: 300px;
+  white-space: nowrap;
 }
 .topbar-project:hover {
   border-color: var(--accent);
