@@ -1,6 +1,6 @@
 {
   "name": "claude-code-memory-explorer",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Memory explorer dashboard for Claude Code",
   "main": "server.js",
   "bin": {
@@ -22,5 +22,30 @@
   "devDependencies": {
     "husky": "^9.0.0"
   },
-  "license": "MIT"
+  "keywords": [
+    "claude",
+    "claude-code",
+    "memory",
+    "dashboard",
+    "anthropic",
+    "ai",
+    "cli",
+    "explorer"
+  ],
+  "homepage": "https://github.com/NikiforovAll/claude-code-memory",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NikiforovAll/claude-code-memory.git"
+  },
+  "bugs": {
+    "url": "https://github.com/NikiforovAll/claude-code-memory/issues"
+  },
+  "author": "NikiforovAll",
+  "license": "MIT",
+  "files": [
+    "server.js",
+    "public/",
+    "README.md",
+    "LICENSE"
+  ]
 }
