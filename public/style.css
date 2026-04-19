@@ -400,6 +400,40 @@ body.light .tree-conditional .file-name {
   text-decoration: none;
   opacity: 0.6;
 }
+/* #region MEMORY_INDEX */
+.memory-index {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.memory-index-row {
+  display: grid;
+  grid-template-columns: 72px 160px 1fr;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+}
+.memory-index-type {
+  flex-shrink: 0;
+}
+.memory-index-name {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.memory-index-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* #endregion MEMORY_INDEX */
+
 .cutoff-line {
   border-top: 2px dashed var(--error);
   margin: 8px 0;

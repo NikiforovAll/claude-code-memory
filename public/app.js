@@ -398,6 +398,41 @@ function navigateGroup(direction) {
 
 // #endregion RENDER_TREE
 
+// #region MEMORY_INDEX
+
+function parseMemoryIndex(content) {
+  const entries = [];
+  for (const line of content.split('\n')) {
+    const m = line.match(/^\s*-\s*\[([^\]]+)\]\(([^)]+\.md)\)\s*[—–-]\s*(.+)$/);
+    if (m) entries.push({ name: m[1], file: m[2], desc: m[3].trim() });
+  }
+  return entries;
+}
+
+function renderMemoryIndexTable(entries) {
+  const TYPE_COLORS = { feedback: 'rule', user: 'user', project: 'project', reference: 'local' };
+  const byName = Object.fromEntries(stackData.map((s) => [s.name, s]));
+  let html = '<div class="memory-index">';
+  for (const entry of entries) {
+    const child = byName[entry.file];
+    const typeMatch = entry.file.match(/^([a-z]+)_/);
+    const type = typeMatch ? typeMatch[1] : 'memory';
+    const scopeColor = TYPE_COLORS[type] || 'memory';
+    const nameHtml = child
+      ? `<a class="import-link" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(entry.name)}</a>`
+      : `<span class="import-link unresolved" title="Not found: ${esc(entry.file)}">⚠ ${esc(entry.name)}</span>`;
+    html += `<div class="memory-index-row">`;
+    html += `<span class="scope-badge scope-${scopeColor} memory-index-type">${esc(type)}</span>`;
+    html += `<span class="memory-index-name">${nameHtml}</span>`;
+    html += `<span class="memory-index-desc">${esc(entry.desc)}</span>`;
+    html += `</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// #endregion MEMORY_INDEX
+
 // #region RENDER_PREVIEW
 
 async function renderPreview() {
@@ -461,6 +496,15 @@ async function renderPreview() {
     const { text: processed, placeholders } = linkifyImports(text, source.id);
     return restorePlaceholders(highlightSource(processed, source.name), placeholders);
   };
+
+  // Memory index view — render structured table for MEMORY.md index files
+  if (source.scope === 'memory' && source.name === 'MEMORY.md') {
+    const entries = parseMemoryIndex(content);
+    if (entries.length) {
+      html += renderMemoryIndexTable(entries);
+    }
+  }
+
   if (source.scope === 'memory' && source.load === 'startup' && source.maxLines) {
     const lines = content.split('\n');
     const cutoff = source.maxLines;
