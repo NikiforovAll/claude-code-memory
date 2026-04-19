@@ -57,7 +57,7 @@ function highlightSource(text, fileName) {
   return esc(text);
 }
 
-function linkifyImports(text, sourceId) {
+function linkifyImports(text, _sourceId) {
   if (!stackData.length) return { text, placeholders: [] };
   const byName = Object.fromEntries(stackData.map((c) => [c.name, c]));
   const placeholders = [];
@@ -183,14 +183,14 @@ function addRecentProject(p) {
   localStorage.setItem('recentProjects', JSON.stringify(recent.slice(0, 10)));
 }
 
-function removeRecentProject(p, e) {
+function _removeRecentProject(p, e) {
   e.stopPropagation();
   const recent = getRecentProjects().filter((r) => r !== p);
   localStorage.setItem('recentProjects', JSON.stringify(recent));
   renderRecentProjects();
 }
 
-function selectRecentProject(p) {
+function _selectRecentProject(p) {
   document.getElementById('projectPathInput').value = p;
 }
 
@@ -206,9 +206,9 @@ function renderRecentProjects() {
     recent
       .map(
         (p) =>
-          `<div class="recent-project-item" onclick="selectRecentProject('${escJs(p)}')">` +
+          `<div class="recent-project-item" onclick="_selectRecentProject('${escJs(p)}')">` +
           `<span>${esc(p)}</span>` +
-          `<button class="recent-project-remove" onclick="removeRecentProject('${escJs(p)}', event)" title="Remove">&#10005;</button>` +
+          `<button class="recent-project-remove" onclick="_removeRecentProject('${escJs(p)}', event)" title="Remove">&#10005;</button>` +
           `</div>`,
       )
       .join('');
@@ -316,7 +316,7 @@ function renderTree() {
     const loadTitle = LOAD_TITLES[item.load] || item.load;
     const meta = `${item.lines}L`;
     const isConditional = item.load === 'conditional' || item.load === 'ondemand';
-    const pad = indent ? ' style="padding-left:' + (12 + indent * 16) + 'px"' : '';
+    const pad = indent ? ` style="padding-left:${12 + indent * 16}px"` : '';
     let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escJs(item.id)}')"${pad}>`;
     h += `<span class="load-icon" title="${loadTitle}" style="color:var(--scope-${item.scope})">${loadIcon}</span>`;
     h += `<span class="file-name">${esc(item.name)}</span>`;
@@ -526,8 +526,8 @@ async function renderPreview() {
 }
 
 function formatBytes(b) {
-  if (b < 1024) return b + 'B';
-  return (b / 1024).toFixed(1) + 'KB';
+  if (b < 1024) return `${b}B`;
+  return `${(b / 1024).toFixed(1)}KB`;
 }
 
 async function openInEditor(filePath) {
@@ -609,7 +609,7 @@ async function loadData() {
       renderPreview();
     }
   } catch (err) {
-    showToast('Failed to load: ' + err.message, 'error');
+    showToast(`Failed to load: ${err.message}`, 'error');
   }
 }
 
@@ -705,7 +705,7 @@ document.addEventListener('keydown', (e) => {
   });
 })();
 
-function hubNavigate(app, url) {
+function _hubNavigate(app, url) {
   if (!window.__HUB__?.enabled) return;
   window.parent?.postMessage({ type: 'hub:navigate', app, url }, '*');
 }
