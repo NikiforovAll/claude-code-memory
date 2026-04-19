@@ -243,13 +243,14 @@ function bindModalKeys(inputId, modalId, submitFn) {
 
 // #region RENDER_TREE
 
-const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory'];
+const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory', 'user-memory'];
 const SCOPE_LABELS = {
   policy: 'Managed Policy',
   user: 'User',
   project: 'Project',
   rule: 'Rules',
   memory: 'Auto Memory',
+  'user-memory': 'User Memory',
 };
 const LOAD_ICONS = {
   always: '\u25CF',
@@ -498,14 +499,14 @@ async function renderPreview() {
   };
 
   // Memory index view — render structured table for MEMORY.md index files
-  if (source.scope === 'memory' && source.name === 'MEMORY.md') {
+  if ((source.scope === 'memory' || source.scope === 'user-memory') && source.name === 'MEMORY.md') {
     const entries = parseMemoryIndex(content);
     if (entries.length) {
       html += renderMemoryIndexTable(entries);
     }
   }
 
-  if (source.scope === 'memory' && source.load === 'startup' && source.maxLines) {
+  if ((source.scope === 'memory' || source.scope === 'user-memory') && source.load === 'startup' && source.maxLines) {
     const lines = content.split('\n');
     const cutoff = source.maxLines;
     if (lines.length > cutoff) {

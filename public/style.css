@@ -24,6 +24,7 @@
   --scope-local: #8a9bb5;
   --scope-rule: #a89bc4;
   --scope-memory: #c4a06a;
+  --scope-user-memory: #9ab87a;
   --scope-policy: #b58a8a;
   --font-mono: 'IBM Plex Mono', monospace;
   --font-serif: 'Playfair Display', serif;
@@ -482,6 +483,10 @@ body.light .tree-conditional .file-name {
 .scope-memory {
   background: rgba(196, 149, 106, 0.18);
   color: var(--scope-memory);
+}
+.scope-user-memory {
+  background: rgba(154, 184, 122, 0.18);
+  color: var(--scope-user-memory);
 }
 .scope-policy {
   background: rgba(181, 138, 138, 0.18);

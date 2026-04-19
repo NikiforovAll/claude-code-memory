@@ -332,6 +332,38 @@ function discoverMemorySources(projectPath) {
     }
   }
 
+  // 7. User-level memory (~/.claude/memory/)
+  const userMemoryDir = path.join(os.homedir(), '.claude', 'memory');
+  if (fs.existsSync(userMemoryDir)) {
+    const userMemoryMd = path.join(userMemoryDir, 'MEMORY.md');
+    const userMemInfo = fileInfo(userMemoryMd);
+    if (userMemInfo) {
+      sources.push({
+        id: 'user-memory-index',
+        name: 'MEMORY.md',
+        scope: 'user-memory',
+        load: 'startup',
+        ...userMemInfo,
+        maxLines: 200,
+        maxBytes: 25 * 1024,
+        ...spreadImports(userMemInfo.path, userMemInfo.content),
+      });
+    }
+    for (const file of findMdFiles(userMemoryDir)) {
+      if (path.basename(file) === 'MEMORY.md') continue;
+      const info = fileInfo(file);
+      if (!info) continue;
+      sources.push({
+        id: `user-memory-${path.basename(file, '.md')}`,
+        name: path.basename(file),
+        scope: 'user-memory',
+        load: 'ondemand',
+        ...info,
+        ...spreadImports(info.path, info.content),
+      });
+    }
+  }
+
   // Resolve imports recursively — add imported files as sources if not already present
   const seen = new Set(sources.map(s => s.path));
   const sourceByPath = Object.fromEntries(sources.map(s => [s.path, s]));
