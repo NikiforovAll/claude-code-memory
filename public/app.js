@@ -457,8 +457,10 @@ async function renderPreview() {
   html += '<div class="preview-title">';
   html += `<span class="scope-badge scope-${source.scope}">${esc(source.scope)}</span>`;
   html += `<span class="file-path">${esc(source.name)}</span>`;
+  html += '<div class="preview-actions">';
   html += `<button class="action-btn small" onclick="openInEditor('${escJs(source.path)}')" title="Open in VS Code"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M17.583 2.207a1.1 1.1 0 0 1 1.541.033l2.636 2.636a1.1 1.1 0 0 1 .033 1.541L10.68 17.53a1.1 1.1 0 0 1-.345.247l-4.56 1.903a.55.55 0 0 1-.725-.725l1.903-4.56a1.1 1.1 0 0 1 .247-.345zm.902 1.87-8.794 8.793-.946 2.268 2.268-.946 8.794-8.793z"/></svg></button>`;
-  html += '</div>';
+  html += `<button class="action-btn small" onclick="_confirmDeleteFile('${escJs(source.path)}','${escJs(source.name)}')" title="Delete file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
+  html += '</div></div>';
 
   // Badges row
   html += '<div class="preview-badges">';
@@ -528,6 +530,48 @@ async function renderPreview() {
 function formatBytes(b) {
   if (b < 1024) return `${b}B`;
   return `${(b / 1024).toFixed(1)}KB`;
+}
+
+function _confirmDeleteFile(filePath, fileName) {
+  const modal = document.getElementById('deleteConfirmModal');
+  modal.dataset.filePath = filePath;
+  document.getElementById('deleteFileName').textContent = fileName;
+  document.getElementById('deleteFilePath').textContent = filePath;
+  modal.classList.add('open');
+}
+
+async function _submitDeleteFile() {
+  const modal = document.getElementById('deleteConfirmModal');
+  const filePath = modal.dataset.filePath;
+  if (!filePath) return;
+  const btn = document.getElementById('deleteConfirmSubmit');
+  btn.disabled = true;
+  btn.textContent = 'Deleting...';
+  try {
+    const res = await fetch('/api/file', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath }),
+    });
+    if (!res.ok) {
+      const msg = await res
+        .json()
+        .then((e) => e.error)
+        .catch(() => `Delete failed (${res.status})`);
+      showToast(msg, 'error');
+      return;
+    }
+    closeModal('deleteConfirmModal');
+    delete modal.dataset.filePath;
+    selectedFileId = null;
+    await loadData();
+    showToast('File deleted', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Delete';
+  }
 }
 
 async function openInEditor(filePath) {
@@ -617,7 +661,7 @@ async function refreshData() {
   try {
     await fetch('/api/refresh', { method: 'POST' });
     await loadData();
-    showToast('Refreshed', 'success');
+    showToast('Data Refreshed', 'success');
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -765,18 +809,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   loadTheme();
   initResize();
   bindModalKeys('projectPathInput', 'projectPickerModal', submitProjectPicker);
-  // Handle ?project= query param
+  // Handle ?project= query param, else restore last-used project from localStorage
   const params = new URLSearchParams(location.search);
-  if (params.has('project')) {
-    const projectPath = params.get('project');
+  let desiredProject = params.get('project');
+  if (!desiredProject) desiredProject = getRecentProjects()[0] || null;
+  if (desiredProject) {
     try {
       const res = await fetch('/api/project', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: projectPath }),
+        body: JSON.stringify({ path: desiredProject }),
       });
-      if (!res.ok) showToast('Failed to switch project', 'error');
+      if (!res.ok && params.has('project')) showToast('Failed to switch project', 'error');
     } catch {}
+  }
+  if (params.has('project')) {
     params.delete('project');
     const qs = params.toString();
     history.replaceState(null, '', qs ? `?${qs}` : location.pathname + location.hash);

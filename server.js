@@ -5,6 +5,7 @@ const express = require('express');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const { execFileSync } = require('child_process');
 
 // #region CLI_ARGS
 
@@ -446,15 +447,38 @@ function findMemoryDir(projectPath) {
   const encoded = encodeProjectPath(projectPath);
   const memDir = path.join(projectsDir, encoded, 'memory');
   if (fs.existsSync(memDir)) return memDir;
+  const main = findMainWorktreePath(projectPath);
+  if (main) {
+    const mainMem = path.join(projectsDir, encodeProjectPath(main), 'memory');
+    if (fs.existsSync(mainMem)) return mainMem;
+  }
   return findMemoryDirBySubstring(projectPath);
 }
 
+function findMainWorktreePath(projectPath) {
+  try {
+    const out = execFileSync('git', ['-C', projectPath, 'rev-parse', '--git-common-dir'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 2000,
+    }).trim();
+    if (!out) return null;
+    const resolved = path.resolve(projectPath, out);
+    if (path.basename(resolved) !== '.git') return null;
+    const main = path.dirname(resolved);
+    if (main === path.resolve(projectPath)) return null;
+    return main;
+  } catch {
+    return null;
+  }
+}
+
 function encodeProjectPath(projectPath) {
-  // Claude Code uses double-dash encoding: C--Users-nikiforovall-dev-foo
+  // Claude Code encoding: `:` and `/` both become `-`, so `C:\Users\foo` → `C--Users-foo`
   return projectPath
     .replace(/\\/g, '/')
-    .replace(/^([A-Za-z]):/, '$1')  // strip colon but keep drive letter
-    .replace(/\//g, '-');           // slashes become single dash; drive letter boundary becomes double dash naturally
+    .replace(/:/g, '-')
+    .replace(/\//g, '-');
 }
 
 function findMemoryDirBySubstring(projectPath) {
@@ -517,14 +541,35 @@ app.put('/api/project', (req, res) => {
   if (!dirPath) return res.status(400).json({ error: 'path required' });
   const resolved = path.resolve(dirPath.replace(/^~/, os.homedir()));
   if (!fs.existsSync(resolved)) return res.status(404).json({ error: 'directory not found' });
-  currentProjectPath = resolved;
-  clearCache();
+  if (resolved !== path.resolve(currentProjectPath)) {
+    currentProjectPath = resolved;
+    clearCache();
+  }
   res.json({ path: currentProjectPath, name: path.basename(currentProjectPath) });
 });
 
 app.post('/api/refresh', (_req, res) => {
   clearCache();
   res.json({ ok: true });
+});
+
+app.delete('/api/file', (req, res) => {
+  const { path: filePath } = req.body || {};
+  if (!filePath) return res.status(400).json({ error: 'path required' });
+  const resolved = path.resolve(filePath.replace(/^~/, os.homedir()));
+  const roots = [path.resolve(CLAUDE_DIR), path.resolve(currentProjectPath)];
+  const inRoot = roots.some((r) => resolved === r || resolved.startsWith(r + path.sep));
+  if (!inRoot) return res.status(403).json({ error: 'path outside allowed roots' });
+  try {
+    const stat = fs.statSync(resolved);
+    if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
+    fs.unlinkSync(resolved);
+    clearCache();
+    res.json({ ok: true });
+  } catch (err) {
+    if (err.code === 'ENOENT') return res.status(404).json({ error: 'file not found' });
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/open-in-editor', (req, res) => {

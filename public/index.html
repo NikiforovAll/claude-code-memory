@@ -104,6 +104,24 @@
     </div>
   </div>
 
+  <!-- Delete confirmation modal -->
+  <div class="modal-overlay" id="deleteConfirmModal" onclick="if(event.target===this)closeModal('deleteConfirmModal')">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>Delete file?</h3>
+        <button class="modal-close" onclick="closeModal('deleteConfirmModal')">&#10005;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">This will permanently delete <strong id="deleteFileName"></strong> from disk.</p>
+        <div class="modal-filepath" id="deleteFilePath"></div>
+        <div class="modal-actions">
+          <button class="action-btn" onclick="closeModal('deleteConfirmModal')">Cancel</button>
+          <button class="action-btn danger" id="deleteConfirmSubmit" onclick="_submitDeleteFile()">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Help modal -->
   <div class="modal-overlay" id="helpModal" onclick="if(event.target===this)toggleHelpModal()">
     <div class="modal">

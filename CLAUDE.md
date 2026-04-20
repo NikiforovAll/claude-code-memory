@@ -27,7 +27,7 @@ Both JS files use `// #region` / `// #endregion` markers for code organization.
 
 ## Key Server Concepts
 
-- **Project path encoding**: Claude Code stores auto memory in `~/.claude/projects/<encoded-path>/memory/`. The encoding replaces `/` with `-` and strips `:` from drive letters. `findMemoryDir()` tries exact match first, falls back to substring matching.
+- **Project path encoding**: Claude Code stores auto memory in `~/.claude/projects/<encoded-path>/memory/`. The encoding replaces `/` with `-` and strips `:` from drive letters. `findMemoryDir()` tries exact match first, then resolves git linked worktrees to the main worktree's memory via `git rev-parse --git-common-dir`, then falls back to substring matching.
 - **Import resolution**: `@path/to/file.md` references are parsed from content. `resolveExistingImports()` resolves paths and filters out non-existent files. Imported files are recursively added to the stack (max 5 levels).
 - **Frontmatter parsing**: YAML frontmatter in rules files (`paths`, `type`, `name`, `description`) determines conditional loading. `parseFrontmatter()` handles both inline values and YAML array syntax.
 - **Rules matching**: `micromatch` glob matching against rule `paths` frontmatter via `/api/rules/match?file=`.

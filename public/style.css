@@ -665,10 +665,33 @@ body.light .tree-conditional .file-name {
 .action-btn.primary:hover {
   filter: brightness(1.1);
 }
+.action-btn.danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+.action-btn.danger:hover {
+  filter: brightness(1.1);
+}
+.modal-filepath {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 8px 0 12px;
+  word-break: break-all;
+}
+.preview-actions {
+  margin-left: auto;
+  display: inline-flex;
+  gap: 4px;
+}
 .action-btn.small {
   padding: 2px 6px;
   font-size: 10px;
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -787,8 +810,8 @@ kbd {
   color: var(--error);
 }
 .toast.success {
-  border-color: var(--success);
-  color: var(--success);
+  border-color: #2ea043;
+  color: #2ea043;
 }
 @keyframes slideIn {
   from {
