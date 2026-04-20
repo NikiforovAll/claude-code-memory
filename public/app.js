@@ -243,14 +243,14 @@ function bindModalKeys(inputId, modalId, submitFn) {
 
 // #region RENDER_TREE
 
-const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory', 'user-memory'];
+const SCOPE_ORDER = ['policy', 'user', 'user-memory', 'project', 'rule', 'memory'];
 const SCOPE_LABELS = {
   policy: 'Managed Policy',
+  'user-memory': 'User Memory',
   user: 'User',
   project: 'Project',
   rule: 'Rules',
   memory: 'Auto Memory',
-  'user-memory': 'User Memory',
 };
 const LOAD_ICONS = {
   always: '\u25CF',
