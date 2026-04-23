@@ -411,20 +411,27 @@ body.light .tree-conditional .file-name {
 }
 .memory-index-row {
   display: grid;
-  grid-template-columns: 72px 160px 1fr;
+  grid-template-columns: 72px max-content 1fr;
   align-items: baseline;
   gap: 8px;
   padding: 3px 0;
 }
 .memory-index-type {
-  flex-shrink: 0;
+  text-align: center;
+  justify-self: center;
+}
+.modal-orphan-list {
+  margin: 0;
+  padding: 8px 12px 8px 28px;
+  list-style: disc;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
 }
 .memory-index-name {
   font-size: 11px;
   font-family: var(--font-mono);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .memory-index-desc {
   font-size: 10px;

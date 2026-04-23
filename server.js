@@ -160,6 +160,11 @@ function spreadImports(filePath, content) {
   return { imports: resolved, softImports: resolvedSoft, unresolvedImports: unresolved };
 }
 
+function hasPathsFilter(frontmatter) {
+  if (!frontmatter || !frontmatter.paths) return false;
+  return Array.isArray(frontmatter.paths) ? frontmatter.paths.length > 0 : true;
+}
+
 function discoverMemorySources(projectPath) {
   const sources = [];
 
@@ -202,7 +207,7 @@ function discoverMemorySources(projectPath) {
         id: `user-rule-${path.basename(file, '.md')}`,
         name: path.basename(file),
         scope: 'rule',
-        load: 'conditional',
+        load: hasPathsFilter(info.frontmatter) ? 'conditional' : 'always',
         ...info,
         ruleSource: 'user',
         ...spreadImports(info.path, info.content),
@@ -293,7 +298,7 @@ function discoverMemorySources(projectPath) {
         id: `project-rule-${path.basename(file, '.md')}`,
         name: path.basename(file),
         scope: 'rule',
-        load: 'conditional',
+        load: hasPathsFilter(info.frontmatter) ? 'conditional' : 'always',
         ...info,
         ruleSource: 'project',
         ...spreadImports(info.path, info.content),
@@ -553,13 +558,18 @@ app.post('/api/refresh', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.delete('/api/file', (req, res) => {
-  const { path: filePath } = req.body || {};
-  if (!filePath) return res.status(400).json({ error: 'path required' });
+function resolveAllowedPath(filePath) {
+  if (!filePath) return { error: { status: 400, message: 'path required' } };
   const resolved = path.resolve(filePath.replace(/^~/, os.homedir()));
   const roots = [path.resolve(CLAUDE_DIR), path.resolve(currentProjectPath)];
   const inRoot = roots.some((r) => resolved === r || resolved.startsWith(r + path.sep));
-  if (!inRoot) return res.status(403).json({ error: 'path outside allowed roots' });
+  if (!inRoot) return { error: { status: 403, message: 'path outside allowed roots' } };
+  return { resolved };
+}
+
+app.delete('/api/file', (req, res) => {
+  const { resolved, error } = resolveAllowedPath(req.body?.path);
+  if (error) return res.status(error.status).json({ error: error.message });
   try {
     const stat = fs.statSync(resolved);
     if (!stat.isFile()) return res.status(400).json({ error: 'not a file' });
@@ -568,6 +578,37 @@ app.delete('/api/file', (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     if (err.code === 'ENOENT') return res.status(404).json({ error: 'file not found' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/memory/cleanup-orphans', (req, res) => {
+  const { resolved, error } = resolveAllowedPath(req.body?.path);
+  if (error) return res.status(error.status).json({ error: error.message });
+  if (path.basename(resolved) !== 'MEMORY.md') return res.status(400).json({ error: 'not a MEMORY.md file' });
+  try {
+    const content = fs.readFileSync(resolved, 'utf-8');
+    const dir = path.dirname(resolved);
+    const lines = content.split('\n');
+    const removed = [];
+    const kept = [];
+    const linkRe = /^\s*-\s*\[([^\]]+)\]\(([^)]+\.md)\)/;
+    for (const line of lines) {
+      const m = line.match(linkRe);
+      if (m) {
+        const target = path.resolve(dir, m[2]);
+        if (!fs.existsSync(target)) {
+          removed.push({ name: m[1], file: m[2] });
+          continue;
+        }
+      }
+      kept.push(line);
+    }
+    if (removed.length === 0) return res.json({ ok: true, removed: [] });
+    fs.writeFileSync(resolved, kept.join('\n'), 'utf-8');
+    clearCache();
+    res.json({ ok: true, removed });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

@@ -401,6 +401,10 @@ function navigateGroup(direction) {
 
 // #region MEMORY_INDEX
 
+function isMemoryIndex(source) {
+  return (source.scope === 'memory' || source.scope === 'user-memory') && source.name === 'MEMORY.md';
+}
+
 function parseMemoryIndex(content) {
   const entries = [];
   for (const line of content.split('\n')) {
@@ -458,6 +462,12 @@ async function renderPreview() {
   html += `<span class="scope-badge scope-${source.scope}">${esc(source.scope)}</span>`;
   html += `<span class="file-path">${esc(source.name)}</span>`;
   html += '<div class="preview-actions">';
+  if (isMemoryIndex(source)) {
+    const broken = (source.unresolvedImports || []).length;
+    if (broken) {
+      html += `<button class="action-btn small" onclick="_cleanupOrphans('${escJs(source.path)}')" title="Cleanup ${broken} orphaned refs"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M12 11v6"/></svg><span style="margin-left:3px">${broken}</span></button>`;
+    }
+  }
   html += `<button class="action-btn small" onclick="openInEditor('${escJs(source.path)}')" title="Open in VS Code"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M17.583 2.207a1.1 1.1 0 0 1 1.541.033l2.636 2.636a1.1 1.1 0 0 1 .033 1.541L10.68 17.53a1.1 1.1 0 0 1-.345.247l-4.56 1.903a.55.55 0 0 1-.725-.725l1.903-4.56a1.1 1.1 0 0 1 .247-.345zm.902 1.87-8.794 8.793-.946 2.268 2.268-.946 8.794-8.793z"/></svg></button>`;
   html += `<button class="action-btn small" onclick="_confirmDeleteFile('${escJs(source.path)}','${escJs(source.name)}')" title="Delete file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
   html += '</div></div>';
@@ -474,10 +484,13 @@ async function renderPreview() {
   }
   html += '</div>';
 
-  // Imports — only show children (files that have this source as parent)
+  const content = fileData.content || '';
+  const memoryEntries = isMemoryIndex(source) ? parseMemoryIndex(content) : [];
+  const showMemoryTable = memoryEntries.length > 0;
+
   const children = stackData.filter((s) => s.parentId === source.id);
   const unresolved = source.unresolvedImports || [];
-  if (children.length || unresolved.length) {
+  if (!showMemoryTable && (children.length || unresolved.length)) {
     html += '<div class="preview-imports">';
     for (const child of children) {
       html += `<a class="import-link" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(child.name)}</a>`;
@@ -493,19 +506,16 @@ async function renderPreview() {
   // File path
   html += `<div class="preview-filepath">${esc(source.path)}</div>`;
 
-  // Content — with cutoff line for auto memory startup files
-  const content = fileData.content || '';
   const hl = (text) => {
     const { text: processed, placeholders } = linkifyImports(text, source.id);
     return restorePlaceholders(highlightSource(processed, source.name), placeholders);
   };
 
-  // Memory index view — render structured table for MEMORY.md index files
-  if ((source.scope === 'memory' || source.scope === 'user-memory') && source.name === 'MEMORY.md') {
-    const entries = parseMemoryIndex(content);
-    if (entries.length) {
-      html += renderMemoryIndexTable(entries);
-    }
+  if (showMemoryTable) {
+    html += renderMemoryIndexTable(memoryEntries);
+    html += `<pre class="preview-code"><code>${hl(content)}</code></pre>`;
+    panel.innerHTML = html;
+    return;
   }
 
   if ((source.scope === 'memory' || source.scope === 'user-memory') && source.load === 'startup' && source.maxLines) {
@@ -571,6 +581,54 @@ async function _submitDeleteFile() {
   } finally {
     btn.disabled = false;
     btn.textContent = 'Delete';
+  }
+}
+
+function _cleanupOrphans(filePath) {
+  const source = stackData.find((s) => s.path === filePath);
+  const broken = source?.unresolvedImports || [];
+  if (!broken.length) {
+    showToast('No orphaned refs', 'info');
+    return;
+  }
+  const modal = document.getElementById('cleanupOrphansModal');
+  modal.dataset.filePath = filePath;
+  document.getElementById('cleanupOrphansCount').textContent = broken.length;
+  document.getElementById('cleanupOrphansList').innerHTML = broken.map((r) => `<li>${esc(r)}</li>`).join('');
+  modal.classList.add('open');
+}
+
+async function _submitCleanupOrphans() {
+  const modal = document.getElementById('cleanupOrphansModal');
+  const filePath = modal.dataset.filePath;
+  if (!filePath) return;
+  const btn = document.getElementById('cleanupOrphansSubmit');
+  btn.disabled = true;
+  btn.textContent = 'Cleaning...';
+  try {
+    const res = await fetch('/api/memory/cleanup-orphans', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath }),
+    });
+    if (!res.ok) {
+      const msg = await res
+        .json()
+        .then((e) => e.error)
+        .catch(() => `Cleanup failed (${res.status})`);
+      showToast(msg, 'error');
+      return;
+    }
+    const data = await res.json();
+    closeModal('cleanupOrphansModal');
+    delete modal.dataset.filePath;
+    await loadData();
+    showToast(`Removed ${data.removed.length} orphaned ref${data.removed.length === 1 ? '' : 's'}`, 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Remove';
   }
 }
 
