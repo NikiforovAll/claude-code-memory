@@ -52,6 +52,10 @@ function clearCache() {
 
 // #region FILESYSTEM_SCANNING
 
+const CLAUDE_MD_VARIANTS = ['CLAUDE.md', '.claude/CLAUDE.md', 'CLAUDE.local.md', '.claude/CLAUDE.local.md'];
+
+const slug = s => s.replace(/[^a-zA-Z0-9]/g, '-');
+
 const MANAGED_POLICY_PATHS = process.platform === 'win32'
   ? [path.join(process.env.ProgramFiles || 'C:\\Program Files', 'ClaudeCode', 'CLAUDE.md')]
   : process.platform === 'darwin'
@@ -219,39 +223,22 @@ function discoverMemorySources(projectPath) {
   const ancestors = getAncestorDirs(projectPath);
   const seenPaths = new Set(sources.map(s => s.path));
   for (const dir of ancestors) {
-    for (const name of ['CLAUDE.md', '.claude/CLAUDE.md']) {
-      const filePath = path.join(dir, name);
+    const isProjectRoot = path.resolve(dir) === path.resolve(projectPath);
+    for (const rel of CLAUDE_MD_VARIANTS) {
+      const filePath = path.join(dir, rel);
       if (seenPaths.has(filePath)) continue;
       const info = fileInfo(filePath);
       if (!info) continue;
       seenPaths.add(filePath);
-      const isProjectRoot = path.resolve(dir) === path.resolve(projectPath);
       sources.push({
-        id: `project-claude-md-${dir.replace(/[^a-zA-Z0-9]/g, '-')}`,
-        name: name.includes('/') ? '.claude/CLAUDE.md' : 'CLAUDE.md',
+        id: `project-claude-md-${slug(rel)}-${slug(dir)}`,
+        name: rel,
         scope: 'project',
         load: 'always',
         ...info,
         dir,
         isProjectRoot,
         ...spreadImports(info.path, info.content),
-      });
-      break;
-    }
-
-    const localPath = path.join(dir, 'CLAUDE.local.md');
-    if (seenPaths.has(localPath)) continue;
-    const localInfo = fileInfo(localPath);
-    if (localInfo) {
-      seenPaths.add(localPath);
-      sources.push({
-        id: `local-claude-md-${dir.replace(/[^a-zA-Z0-9]/g, '-')}`,
-        name: 'CLAUDE.local.md',
-        scope: 'project',
-        load: 'always',
-        ...localInfo,
-        dir,
-        ...spreadImports(localInfo.path, localInfo.content),
       });
     }
   }
@@ -265,7 +252,7 @@ function discoverMemorySources(projectPath) {
     for (const entry of entries) {
       if (!entry.isDirectory() || SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
       const subdir = path.join(dir, entry.name);
-      for (const name of ['CLAUDE.md', '.claude/CLAUDE.md']) {
+      for (const name of CLAUDE_MD_VARIANTS) {
         const filePath = path.join(subdir, name);
         if (seenPaths.has(filePath)) continue;
         const info = fileInfo(filePath);
@@ -273,8 +260,8 @@ function discoverMemorySources(projectPath) {
         seenPaths.add(filePath);
         const rel = path.relative(projectPath, subdir).replace(/\\/g, '/');
         sources.push({
-          id: `project-claude-md-${subdir.replace(/[^a-zA-Z0-9]/g, '-')}`,
-          name: `${rel}/${name.includes('/') ? '.claude/CLAUDE.md' : 'CLAUDE.md'}`,
+          id: `project-claude-md-${slug(name)}-${slug(subdir)}`,
+          name: `${rel}/${name}`,
           scope: 'project',
           load: 'tree',
           ...info,
@@ -378,7 +365,7 @@ function discoverMemorySources(projectPath) {
     for (const { imp, parent, hard } of batch) {
       if (seen.has(imp)) {
         const existing = sourceByPath[imp];
-        if (existing && !existing.parentId && existing.scope === 'memory') {
+        if (existing && !existing.parentId && (existing.scope === 'memory' || existing.scope === 'agent-memory')) {
           existing.parentId = parent.id;
           if (hard) existing.load = 'import';
         }
