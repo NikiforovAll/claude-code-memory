@@ -243,14 +243,14 @@ function bindModalKeys(inputId, modalId, submitFn) {
 
 // #region RENDER_TREE
 
-const SCOPE_ORDER = ['policy', 'user', 'user-memory', 'project', 'rule', 'memory'];
+const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory', 'agent-memory'];
 const SCOPE_LABELS = {
   policy: 'Managed Policy',
-  'user-memory': 'User Memory',
   user: 'User',
   project: 'Project',
   rule: 'Rules',
   memory: 'Auto Memory',
+  'agent-memory': 'Agent Memory',
 };
 const LOAD_ICONS = {
   always: '\u25CF',
@@ -317,7 +317,8 @@ function renderTree() {
     const meta = `${item.lines}L`;
     const isConditional = item.load === 'conditional' || item.load === 'ondemand';
     const pad = indent ? ` style="padding-left:${12 + indent * 16}px"` : '';
-    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escJs(item.id)}')"${pad}>`;
+    const muted = item.scope === 'agent-memory' ? ' tree-agent-item' : '';
+    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}${muted}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escJs(item.id)}')"${pad}>`;
     h += `<span class="load-icon" title="${loadTitle}" style="color:var(--scope-${item.scope})">${loadIcon}</span>`;
     h += `<span class="file-name">${esc(item.name)}</span>`;
     h += `<span class="file-meta">${meta}</span>`;
@@ -334,10 +335,65 @@ function renderTree() {
     const items = groups[scope];
     if (!items) continue;
     const label = SCOPE_LABELS[scope] || scope;
-    html += `<div class="tree-group-header"><span class="scope-dot" style="color:var(--scope-${scope})">\u25CF</span> ${esc(label)} <span style="opacity:0.5">${items.length}</span></div>`;
-    for (const item of items) html += renderItem(item, 0);
+    const collapsible = scope === 'agent-memory';
+    const collapsed = collapsible && isGroupCollapsed(scope);
+    const chevron = collapsible ? `<span class="group-chevron">${collapsed ? '\u25B8' : '\u25BE'}</span>` : '';
+    const headerClass = collapsible ? 'tree-group-header tree-group-clickable' : 'tree-group-header';
+    const onclick = collapsible ? ` onclick="_toggleGroup('${escJs(scope)}')"` : '';
+    html += `<div class="${headerClass}" data-scope="${esc(scope)}"${onclick}>${chevron}<span class="scope-dot" style="color:var(--scope-${scope})">\u25CF</span> ${esc(label)} <span style="opacity:0.5">${items.length}</span></div>`;
+    if (collapsed) continue;
+    if (scope === 'agent-memory') {
+      const sorted = [...items].sort((a, b) => {
+        const so = ['user', 'project', 'local'];
+        return (
+          so.indexOf(a.agentScope) - so.indexOf(b.agentScope) ||
+          a.agentName.localeCompare(b.agentName) ||
+          (a.name === 'MEMORY.md' ? -1 : 1)
+        );
+      });
+      let lastKey = null;
+      for (const item of sorted) {
+        const key = `${item.agentScope}/${item.agentName}`;
+        if (key !== lastKey) {
+          html += `<div class="tree-subgroup-header" title="${esc(item.agentScope)} scope"><span class="agent-name">${esc(item.agentName)}</span><span class="agent-scope-tag">${esc(item.agentScope)}</span></div>`;
+          lastKey = key;
+        }
+        html += renderItem(item, 1);
+      }
+    } else {
+      for (const item of items) html += renderItem(item, 0);
+    }
   }
   container.innerHTML = html;
+}
+
+const COLLAPSED_DEFAULTS = ['agent-memory'];
+function getCollapsedGroups() {
+  try {
+    const stored = localStorage.getItem('collapsedGroups');
+    if (stored !== null) return new Set(JSON.parse(stored));
+  } catch {}
+  return new Set(COLLAPSED_DEFAULTS);
+}
+function isGroupCollapsed(scope) {
+  return getCollapsedGroups().has(scope);
+}
+function setGroupCollapsed(scope, collapsed) {
+  const set = getCollapsedGroups();
+  if (collapsed) set.add(scope);
+  else set.delete(scope);
+  localStorage.setItem('collapsedGroups', JSON.stringify([...set]));
+}
+function _toggleGroup(scope) {
+  setGroupCollapsed(scope, !isGroupCollapsed(scope));
+  renderTree();
+}
+function getItemScope(item) {
+  return item?.parentId ? stackData.find((s) => s.id === item.parentId)?.scope : item?.scope;
+}
+function expandGroupForItem(item) {
+  const scope = getItemScope(item);
+  if (scope && isGroupCollapsed(scope)) setGroupCollapsed(scope, false);
 }
 
 function pushFileState(id) {
@@ -368,7 +424,9 @@ function navigateTree(direction) {
     if (idx < 0) idx = navOrder.length - 1;
     if (idx >= navOrder.length) idx = 0;
   }
-  selectedFileId = navOrder[idx].id;
+  const target = navOrder[idx];
+  selectedFileId = target.id;
+  expandGroupForItem(target);
   pushFileState(selectedFileId);
   renderTree();
   renderPreview();
@@ -381,8 +439,7 @@ function navigateGroup(direction) {
   if (!activeScopes.length) return;
 
   const current = stackData.find((s) => s.id === selectedFileId);
-  const currentScope = current?.parentId ? stackData.find((s) => s.id === current.parentId)?.scope : current?.scope;
-  let scopeIdx = activeScopes.indexOf(currentScope);
+  let scopeIdx = activeScopes.indexOf(getItemScope(current));
   if (scopeIdx === -1) {
     scopeIdx = direction > 0 ? 0 : activeScopes.length - 1;
   } else {
@@ -390,7 +447,9 @@ function navigateGroup(direction) {
     if (scopeIdx < 0) scopeIdx = activeScopes.length - 1;
     if (scopeIdx >= activeScopes.length) scopeIdx = 0;
   }
-  selectedFileId = groups[activeScopes[scopeIdx]][0].id;
+  const target = groups[activeScopes[scopeIdx]][0];
+  selectedFileId = target.id;
+  expandGroupForItem(target);
   pushFileState(selectedFileId);
   renderTree();
   renderPreview();
@@ -402,7 +461,7 @@ function navigateGroup(direction) {
 // #region MEMORY_INDEX
 
 function isMemoryIndex(source) {
-  return (source.scope === 'memory' || source.scope === 'user-memory') && source.name === 'MEMORY.md';
+  return (source.scope === 'memory' || source.scope === 'agent-memory') && source.name === 'MEMORY.md';
 }
 
 function parseMemoryIndex(content) {
@@ -518,7 +577,7 @@ async function renderPreview() {
     return;
   }
 
-  if ((source.scope === 'memory' || source.scope === 'user-memory') && source.load === 'startup' && source.maxLines) {
+  if ((source.scope === 'memory' || source.scope === 'agent-memory') && source.load === 'startup' && source.maxLines) {
     const lines = content.split('\n');
     const cutoff = source.maxLines;
     if (lines.length > cutoff) {

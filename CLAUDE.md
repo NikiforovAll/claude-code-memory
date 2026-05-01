@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Dashboard for visualizing all memory sources that influence Claude Code behavior. Shows the full memory stack: CLAUDE.md files (user/project/local), rules (`.claude/rules/*.md` with optional path-scoped frontmatter), auto memory (`~/.claude/projects/<encoded>/memory/`), and `@import` chains.
+Dashboard for visualizing all memory sources that influence Claude Code behavior. Shows the full memory stack: CLAUDE.md files (user/project/local), rules (`.claude/rules/*.md` with optional path-scoped frontmatter), auto memory (`~/.claude/projects/<encoded>/memory/`), subagent persistent memory (`~/.claude/agent-memory/`, `.claude/agent-memory/`, `.claude/agent-memory-local/`), and `@import` chains.
 
 ## Commands
 
@@ -28,6 +28,7 @@ Both JS files use `// #region` / `// #endregion` markers for code organization.
 ## Key Server Concepts
 
 - **Project path encoding**: Claude Code stores auto memory in `~/.claude/projects/<encoded-path>/memory/`. The encoding replaces `/` with `-` and strips `:` from drive letters. `findMemoryDir()` tries exact match first, then resolves git linked worktrees to the main worktree's memory via `git rev-parse --git-common-dir`, then falls back to substring matching.
+- **Agent persistent memory**: Subagents declared with `memory: user|project|local` frontmatter get a directory at `~/.claude/agent-memory/<agent>/`, `<project>/.claude/agent-memory/<agent>/`, or `<project>/.claude/agent-memory-local/<agent>/`. Each follows the auto-memory layout (`MEMORY.md` startup-loaded with 200-line / 25 KB cap, siblings on-demand). Sources carry `agentScope` and `agentName` fields; the tree groups them under "Agent Memory" with a per-agent sub-header.
 - **Import resolution**: `@path/to/file.md` references are parsed from content. `resolveExistingImports()` resolves paths and filters out non-existent files. Imported files are recursively added to the stack (max 5 levels).
 - **Frontmatter parsing**: YAML frontmatter in rules files (`paths`, `type`, `name`, `description`) determines conditional loading. `parseFrontmatter()` handles both inline values and YAML array syntax.
 - **Rules matching**: `micromatch` glob matching against rule `paths` frontmatter via `/api/rules/match?file=`.

@@ -306,67 +306,61 @@ function discoverMemorySources(projectPath) {
     }
   }
 
-  // 6. Auto memory
-  const memoryDir = findMemoryDir(projectPath);
-  if (memoryDir && fs.existsSync(memoryDir)) {
-    const memoryMd = path.join(memoryDir, 'MEMORY.md');
+  function pushMemoryDir(dir, scope, idPrefix, extraFields = {}) {
+    const memoryMd = path.join(dir, 'MEMORY.md');
     const memInfo = fileInfo(memoryMd);
     if (memInfo) {
       sources.push({
-        id: 'memory-index',
+        id: `${idPrefix}-index`,
         name: 'MEMORY.md',
-        scope: 'memory',
+        scope,
         load: 'startup',
+        ...extraFields,
         ...memInfo,
         maxLines: 200,
         maxBytes: 25 * 1024,
         ...spreadImports(memInfo.path, memInfo.content),
       });
     }
-    for (const file of findMdFiles(memoryDir)) {
+    for (const file of findMdFiles(dir)) {
       if (path.basename(file) === 'MEMORY.md') continue;
       const info = fileInfo(file);
       if (!info) continue;
       sources.push({
-        id: `memory-${path.basename(file, '.md')}`,
+        id: `${idPrefix}-${path.basename(file, '.md')}`,
         name: path.basename(file),
-        scope: 'memory',
+        scope,
         load: 'ondemand',
+        ...extraFields,
         ...info,
         ...spreadImports(info.path, info.content),
       });
     }
   }
 
-  // 7. User-level memory (~/.claude/memory/)
-  const userMemoryDir = path.join(os.homedir(), '.claude', 'memory');
-  if (fs.existsSync(userMemoryDir)) {
-    const userMemoryMd = path.join(userMemoryDir, 'MEMORY.md');
-    const userMemInfo = fileInfo(userMemoryMd);
-    if (userMemInfo) {
-      sources.push({
-        id: 'user-memory-index',
-        name: 'MEMORY.md',
-        scope: 'user-memory',
-        load: 'startup',
-        ...userMemInfo,
-        maxLines: 200,
-        maxBytes: 25 * 1024,
-        ...spreadImports(userMemInfo.path, userMemInfo.content),
-      });
-    }
-    for (const file of findMdFiles(userMemoryDir)) {
-      if (path.basename(file) === 'MEMORY.md') continue;
-      const info = fileInfo(file);
-      if (!info) continue;
-      sources.push({
-        id: `user-memory-${path.basename(file, '.md')}`,
-        name: path.basename(file),
-        scope: 'user-memory',
-        load: 'ondemand',
-        ...info,
-        ...spreadImports(info.path, info.content),
-      });
+  // 6. Auto memory
+  const memoryDir = findMemoryDir(projectPath);
+  if (memoryDir && fs.existsSync(memoryDir)) {
+    pushMemoryDir(memoryDir, 'memory', 'memory');
+  }
+
+  // 7. Subagent persistent memory (https://code.claude.com/docs/en/sub-agents#enable-persistent-memory)
+  //    user:    ~/.claude/agent-memory/<agent>/
+  //    project: <project>/.claude/agent-memory/<agent>/
+  //    local:   <project>/.claude/agent-memory-local/<agent>/
+  const agentMemoryRoots = [
+    { root: path.join(os.homedir(), '.claude', 'agent-memory'), agentScope: 'user' },
+    { root: path.join(projectPath, '.claude', 'agent-memory'), agentScope: 'project' },
+    { root: path.join(projectPath, '.claude', 'agent-memory-local'), agentScope: 'local' },
+  ];
+  for (const { root, agentScope } of agentMemoryRoots) {
+    let agentDirs;
+    try { agentDirs = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+    for (const entry of agentDirs) {
+      if (!entry.isDirectory()) continue;
+      const agentName = entry.name;
+      const idPrefix = `agent-memory-${agentScope}-${agentName.replace(/[^a-zA-Z0-9]/g, '-')}`;
+      pushMemoryDir(path.join(root, agentName), 'agent-memory', idPrefix, { agentScope, agentName });
     }
   }
 

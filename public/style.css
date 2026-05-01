@@ -24,7 +24,7 @@
   --scope-local: #8a9bb5;
   --scope-rule: #a89bc4;
   --scope-memory: #c4a06a;
-  --scope-user-memory: #9ab87a;
+  --scope-agent-memory: #8aa8a3;
   --scope-policy: #b58a8a;
   --font-mono: 'IBM Plex Mono', monospace;
   --font-serif: 'Playfair Display', serif;
@@ -261,6 +261,49 @@ body {
   align-items: center;
   gap: 6px;
 }
+.tree-subgroup-header {
+  padding: 6px 12px 2px 20px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  opacity: 0.85;
+}
+.tree-subgroup-header .agent-name {
+  color: var(--text-tertiary);
+}
+.tree-subgroup-header .agent-scope-tag {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(138, 168, 163, 0.12);
+  color: var(--scope-agent-memory);
+  opacity: 0.85;
+}
+.tree-group-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.tree-group-clickable:hover {
+  color: var(--text-secondary);
+}
+.group-chevron {
+  display: inline-block;
+  width: 10px;
+  font-size: 9px;
+  color: var(--text-muted);
+}
+.tree-agent-item .file-name {
+  opacity: 0.7;
+}
+body.light .tree-agent-item .file-name {
+  opacity: 0.8;
+}
 .tree-item {
   padding: 5px 12px 5px 24px;
   cursor: pointer;
@@ -491,9 +534,9 @@ body.light .tree-conditional .file-name {
   background: rgba(196, 149, 106, 0.18);
   color: var(--scope-memory);
 }
-.scope-user-memory {
-  background: rgba(154, 184, 122, 0.18);
-  color: var(--scope-user-memory);
+.scope-agent-memory {
+  background: rgba(138, 168, 163, 0.18);
+  color: var(--scope-agent-memory);
 }
 .scope-policy {
   background: rgba(181, 138, 138, 0.18);

@@ -62,6 +62,7 @@ Claude Code stores memory across multiple locations:
 | CLAUDE.local.md | `./CLAUDE.local.md` | Always |
 | Rules | `.claude/rules/*.md` | Conditional (path-scoped) |
 | Auto memory | `~/.claude/projects/<encoded>/memory/` | Startup (MEMORY.md) or on-demand |
+| Agent memory | `~/.claude/agent-memory/<agent>/`, `./.claude/agent-memory/<agent>/`, `./.claude/agent-memory-local/<agent>/` | Startup (MEMORY.md) or on-demand |
 
 The dashboard:
 1. **Scans** all memory locations — `~/.claude/`, ancestor directories, project rules, auto memory
