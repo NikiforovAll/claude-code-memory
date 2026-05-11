@@ -17,21 +17,19 @@ function getArg(name) {
   return process.argv[eqIdx + 1] || null;
 }
 
+const expandHome = (p) => (p || '').replace(/^~/, os.homedir());
+
 const PORT = getArg('port') || process.env.PORT || 3459;
 const AUTO_OPEN = process.argv.includes('--open');
 const claudeDirArg = getArg('dir');
-const CLAUDE_DIR = claudeDirArg
-  ? claudeDirArg.replace(/^~/, os.homedir())
-  : path.join(os.homedir(), '.claude');
+const CLAUDE_DIR = claudeDirArg ? expandHome(claudeDirArg) : path.join(os.homedir(), '.claude');
 const projectDirArg = getArg('project');
 
 // #endregion CLI_ARGS
 
 // #region STATE
 
-let currentProjectPath = projectDirArg
-  ? path.resolve(projectDirArg.replace(/^~/, os.homedir()))
-  : process.cwd();
+let currentProjectPath = projectDirArg ? path.resolve(expandHome(projectDirArg)) : process.cwd();
 
 const cache = {};
 const CACHE_TTL = 30_000;
@@ -129,7 +127,7 @@ function parseImports(content) {
 function resolveImport(importPath, fromFile) {
   let resolved = importPath;
   if (resolved.startsWith('~')) {
-    resolved = resolved.replace(/^~/, os.homedir());
+    resolved = expandHome(resolved);
   } else {
     resolved = path.resolve(path.dirname(fromFile), resolved);
   }
@@ -325,7 +323,7 @@ function discoverMemorySources(projectPath) {
     }
   }
 
-  // 6. Auto memory
+  // 6. Auto memory (projects base honors `autoMemoryDirectory` user setting)
   const memoryDir = findMemoryDir(projectPath);
   if (memoryDir && fs.existsSync(memoryDir)) {
     pushMemoryDir(memoryDir, 'memory', 'memory');
@@ -428,7 +426,7 @@ function getAncestorDirs(projectPath) {
 }
 
 function findMemoryDir(projectPath) {
-  const projectsDir = path.join(CLAUDE_DIR, 'projects');
+  const projectsDir = getProjectsBaseDir();
   if (!fs.existsSync(projectsDir)) return null;
   const encoded = encodeProjectPath(projectPath);
   const memDir = path.join(projectsDir, encoded, 'memory');
@@ -467,8 +465,17 @@ function encodeProjectPath(projectPath) {
     .replace(/\//g, '-');
 }
 
+// User-scope `autoMemoryDirectory` only — Claude Code rejects this key from project/local settings for security.
+function getProjectsBaseDir() {
+  let settings = {};
+  try { settings = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf-8')); } catch { /* no settings */ }
+  const raw = settings.autoMemoryDirectory;
+  if (typeof raw === 'string' && raw.trim()) return path.resolve(expandHome(raw));
+  return path.join(CLAUDE_DIR, 'projects');
+}
+
 function findMemoryDirBySubstring(projectPath) {
-  const projectsDir = path.join(CLAUDE_DIR, 'projects');
+  const projectsDir = getProjectsBaseDir();
   if (!fs.existsSync(projectsDir)) return null;
   // Match by last 2-3 path segments
   const segments = projectPath.replace(/\\/g, '/').split('/').filter(Boolean);
@@ -525,7 +532,7 @@ app.get('/api/project', (_req, res) => {
 app.put('/api/project', (req, res) => {
   const { path: dirPath } = req.body;
   if (!dirPath) return res.status(400).json({ error: 'path required' });
-  const resolved = path.resolve(dirPath.replace(/^~/, os.homedir()));
+  const resolved = path.resolve(expandHome(dirPath));
   if (!fs.existsSync(resolved)) return res.status(404).json({ error: 'directory not found' });
   if (resolved !== path.resolve(currentProjectPath)) {
     currentProjectPath = resolved;
@@ -541,8 +548,12 @@ app.post('/api/refresh', (_req, res) => {
 
 function resolveAllowedPath(filePath) {
   if (!filePath) return { error: { status: 400, message: 'path required' } };
-  const resolved = path.resolve(filePath.replace(/^~/, os.homedir()));
-  const roots = [path.resolve(CLAUDE_DIR), path.resolve(currentProjectPath)];
+  const resolved = path.resolve(expandHome(filePath));
+  const roots = [
+    path.resolve(CLAUDE_DIR),
+    path.resolve(currentProjectPath),
+    getProjectsBaseDir(),
+  ];
   const inRoot = roots.some((r) => resolved === r || resolved.startsWith(r + path.sep));
   if (!inRoot) return { error: { status: 403, message: 'path outside allowed roots' } };
   return { resolved };
@@ -597,7 +608,7 @@ app.post('/api/memory/cleanup-orphans', (req, res) => {
 app.post('/api/open-in-editor', (req, res) => {
   const { path: filePath } = req.body;
   if (!filePath) return res.status(400).json({ error: 'path required' });
-  const resolved = filePath.replace(/^~/, os.homedir());
+  const resolved = expandHome(filePath);
   if (!fs.existsSync(resolved)) return res.status(404).json({ error: 'file not found' });
   const { exec } = require('child_process');
   exec(`code "${resolved}"`, (err) => {
