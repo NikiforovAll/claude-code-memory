@@ -298,10 +298,10 @@ body {
   color: var(--text-muted);
 }
 .tree-agent-item .file-name {
-  opacity: 0.7;
+  opacity: 0.78;
 }
 body.light .tree-agent-item .file-name {
-  opacity: 0.8;
+  opacity: 0.86;
 }
 .tree-item {
   padding: 5px 12px 5px 24px;
@@ -347,7 +347,7 @@ body.light .tree-agent-item .file-name {
 }
 .tree-item .file-name {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -360,13 +360,13 @@ body.light .tree-agent-item .file-name {
   flex-shrink: 0;
 }
 .tree-child .file-name {
-  opacity: 0.75;
+  opacity: 0.82;
 }
 .tree-conditional .file-name {
-  opacity: 0.55;
+  opacity: 0.68;
 }
 body.light .tree-conditional .file-name {
-  opacity: 0.75;
+  opacity: 0.8;
 }
 /* #endregion TREE */
 
@@ -384,8 +384,8 @@ body.light .tree-conditional .file-name {
 }
 .preview-title .file-path {
   font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: 12px;
+  color: var(--text-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -401,10 +401,10 @@ body.light .tree-conditional .file-name {
   margin-top: 6px;
 }
 .preview-filepath {
-  padding: 4px 16px;
+  padding: 5px 16px;
   font-family: var(--font-mono);
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: 12px;
+  color: var(--text-tertiary);
   background: var(--bg-deep);
   border-bottom: 1px solid var(--border);
   overflow: hidden;
@@ -413,7 +413,7 @@ body.light .tree-conditional .file-name {
 }
 .preview-code {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.6;
   color: var(--text-primary);
   white-space: pre-wrap;
