@@ -374,10 +374,10 @@ function discoverMemorySources(projectPath) {
       if (!info) continue;
       const { resolved: imports, resolvedSoft: softImports, unresolved: unresolvedImports } = resolveAllImports(imp, info.content);
       const source = {
-        id: `import-${path.basename(imp, '.md')}-${depth}`,
+        id: `import-${imp.replace(/[^a-zA-Z0-9]/g, '-')}`,
         name: path.basename(imp),
         scope: parent.scope,
-        load: 'import',
+        load: hard ? 'import' : 'link',
         ...info,
         importedBy: parent.path,
         parentId: parent.id,

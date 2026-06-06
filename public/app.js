@@ -258,6 +258,7 @@ const LOAD_ICONS = {
   conditional: '\u25CB',
   ondemand: '\u25CC',
   import: '@',
+  link: '\u2197',
 };
 const LOAD_TITLES = {
   always: 'Always loaded',
@@ -265,6 +266,7 @@ const LOAD_TITLES = {
   conditional: 'Conditional (path-scoped)',
   ondemand: 'On-demand',
   import: 'Imported by parent file',
+  link: 'Referenced via markdown link (not auto-loaded)',
 };
 
 let treeIndex = null;
@@ -282,17 +284,12 @@ function getTreeIndex() {
       groups[s.scope].push(s);
     }
   }
-  const navOrder = [];
-  function collect(item) {
-    navOrder.push(item);
-    const children = childrenOf[item.id];
-    if (children) for (const c of children) collect(c);
+  // Default-expand parents whose children are real discovered files (e.g. auto-memory
+  // dirs indexed by MEMORY.md). Pure @import/link references (importedBy set) stay collapsed.
+  for (const parentId in childrenOf) {
+    if (childrenOf[parentId].some((c) => !c.importedBy)) expandedItems.add(parentId);
   }
-  for (const scope of SCOPE_ORDER) {
-    const items = groups[scope];
-    if (items) for (const item of items) collect(item);
-  }
-  treeIndex = { groups, childrenOf, navOrder };
+  treeIndex = { groups, childrenOf };
   return treeIndex;
 }
 
@@ -315,16 +312,21 @@ function renderTree() {
     const loadIcon = LOAD_ICONS[item.load] || '';
     const loadTitle = LOAD_TITLES[item.load] || item.load;
     const meta = `${item.lines}L`;
-    const isConditional = item.load === 'conditional' || item.load === 'ondemand';
+    const isConditional = item.load === 'conditional' || item.load === 'ondemand' || item.load === 'link';
     const pad = indent ? ` style="padding-left:${12 + indent * 16}px"` : '';
     const muted = item.scope === 'agent-memory' ? ' tree-agent-item' : '';
+    const children = childrenOf[item.id];
+    const expanded = children && isItemExpanded(item.id);
+    const chevron = children
+      ? `<span class="tree-chevron" onclick="_toggleItem(event,'${escJs(item.id)}')" title="${children.length} referenced">${expanded ? '▾' : '▸'}</span>`
+      : '<span class="tree-chevron-spacer"></span>';
     let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}${muted}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escJs(item.id)}')"${pad}>`;
+    h += chevron;
     h += `<span class="load-icon" title="${loadTitle}" style="color:var(--scope-${item.scope})">${loadIcon}</span>`;
     h += `<span class="file-name">${esc(item.name)}</span>`;
     h += `<span class="file-meta">${meta}</span>`;
     h += '</div>';
-    const children = childrenOf[item.id];
-    if (children) {
+    if (expanded) {
       for (const child of children) h += renderItem(child, (indent || 0) + 1);
     }
     return h;
@@ -396,6 +398,26 @@ function expandGroupForItem(item) {
   if (scope && isGroupCollapsed(scope)) setGroupCollapsed(scope, false);
 }
 
+// Referenced/child files are collapsed by default; expand on click. Only top-level
+// "root" files (those not pulled in via an import/link) are shown until expanded.
+const expandedItems = new Set();
+function isItemExpanded(id) {
+  return expandedItems.has(id);
+}
+function _toggleItem(event, id) {
+  event.stopPropagation();
+  if (expandedItems.has(id)) expandedItems.delete(id);
+  else expandedItems.add(id);
+  renderTree();
+}
+function expandItemAncestors(item) {
+  let cur = item;
+  while (cur?.parentId) {
+    expandedItems.add(cur.parentId);
+    cur = stackData.find((s) => s.id === cur.parentId);
+  }
+}
+
 function pushFileState(id) {
   const url = id ? `#${encodeURIComponent(id)}` : location.pathname;
   history.pushState({ fileId: id }, '', url);
@@ -403,6 +425,13 @@ function pushFileState(id) {
 
 function selectFile(id, pushState = true) {
   selectedFileId = selectedFileId === id ? null : id;
+  if (selectedFileId) {
+    const item = stackData.find((s) => s.id === selectedFileId);
+    if (item) {
+      expandGroupForItem(item);
+      expandItemAncestors(item);
+    }
+  }
   if (pushState) pushFileState(selectedFileId);
   renderTree();
   renderPreview();
@@ -413,47 +442,76 @@ function scrollToSelected() {
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
 
-function navigateTree(direction) {
-  const { navOrder } = getTreeIndex();
-  if (!navOrder.length) return;
-  let idx = navOrder.findIndex((s) => s.id === selectedFileId);
-  if (idx === -1) {
-    idx = direction > 0 ? 0 : navOrder.length - 1;
-  } else {
-    idx += direction;
-    if (idx < 0) idx = navOrder.length - 1;
-    if (idx >= navOrder.length) idx = 0;
-  }
-  const target = navOrder[idx];
-  selectedFileId = target.id;
-  expandGroupForItem(target);
-  pushFileState(selectedFileId);
+function currentItem() {
+  return stackData.find((s) => s.id === selectedFileId) || null;
+}
+
+function selectNav(id) {
+  selectedFileId = id;
+  pushFileState(id);
   renderTree();
   renderPreview();
   scrollToSelected();
 }
 
-function navigateGroup(direction) {
-  const { groups } = getTreeIndex();
-  const activeScopes = SCOPE_ORDER.filter((sc) => groups[sc]?.length);
-  if (!activeScopes.length) return;
-
-  const current = stackData.find((s) => s.id === selectedFileId);
-  let scopeIdx = activeScopes.indexOf(getItemScope(current));
-  if (scopeIdx === -1) {
-    scopeIdx = direction > 0 ? 0 : activeScopes.length - 1;
-  } else {
-    scopeIdx += direction;
-    if (scopeIdx < 0) scopeIdx = activeScopes.length - 1;
-    if (scopeIdx >= activeScopes.length) scopeIdx = 0;
+// Visible traversal order: collapsed subtrees and collapsed groups are skipped.
+function getVisibleOrder() {
+  const { groups, childrenOf } = getTreeIndex();
+  const order = [];
+  const walk = (item) => {
+    order.push(item);
+    if (isItemExpanded(item.id)) {
+      const children = childrenOf[item.id];
+      if (children) for (const c of children) walk(c);
+    }
+  };
+  for (const scope of SCOPE_ORDER) {
+    if (isGroupCollapsed(scope)) continue;
+    const items = groups[scope];
+    if (items) for (const item of items) walk(item);
   }
-  const target = groups[activeScopes[scopeIdx]][0];
-  selectedFileId = target.id;
-  expandGroupForItem(target);
-  pushFileState(selectedFileId);
-  renderTree();
-  renderPreview();
-  scrollToSelected();
+  return order;
+}
+
+function navigateTree(direction) {
+  const order = getVisibleOrder();
+  if (!order.length) return;
+  let idx = order.findIndex((s) => s.id === selectedFileId);
+  if (idx === -1) {
+    idx = direction > 0 ? 0 : order.length - 1;
+  } else {
+    idx += direction;
+    if (idx < 0) idx = order.length - 1;
+    if (idx >= order.length) idx = 0;
+  }
+  selectNav(order[idx].id);
+}
+
+// l / Right: expand a collapsed node, descend into an expanded one, leaf = no-op.
+function expandOrDescend() {
+  const item = currentItem();
+  if (!item) return navigateTree(1);
+  const children = getTreeIndex().childrenOf[item.id];
+  if (!children?.length) return;
+  if (!isItemExpanded(item.id)) {
+    expandedItems.add(item.id);
+    renderTree();
+  } else {
+    selectNav(children[0].id);
+  }
+}
+
+// h / Left: collapse an expanded node, otherwise ascend to its parent.
+function collapseOrAscend() {
+  const item = currentItem();
+  if (!item) return navigateTree(-1);
+  const children = getTreeIndex().childrenOf[item.id];
+  if (children?.length && isItemExpanded(item.id)) {
+    expandedItems.delete(item.id);
+    renderTree();
+  } else if (item.parentId) {
+    selectNav(item.parentId);
+  }
 }
 
 // #endregion RENDER_TREE
@@ -821,21 +879,23 @@ document.addEventListener('keydown', (e) => {
     e.preventDefault();
     changeProject();
   }
-  if (e.key === 'j' || e.key === 'ArrowDown') {
+  // Skip when modifiers are held (e.g. hub's Ctrl+Alt+Arrow app switching).
+  const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
+  if (plain && (e.key === 'j' || e.key === 'ArrowDown')) {
     e.preventDefault();
     navigateTree(1);
   }
-  if (e.key === 'k' || e.key === 'ArrowUp') {
+  if (plain && (e.key === 'k' || e.key === 'ArrowUp')) {
     e.preventDefault();
     navigateTree(-1);
   }
-  if (e.key === 'h' || e.key === 'ArrowLeft') {
+  if (plain && (e.key === 'h' || e.key === 'ArrowLeft')) {
     e.preventDefault();
-    navigateGroup(-1);
+    collapseOrAscend();
   }
-  if (e.key === 'l' || e.key === 'ArrowRight') {
+  if (plain && (e.key === 'l' || e.key === 'ArrowRight')) {
     e.preventDefault();
-    navigateGroup(1);
+    expandOrDescend();
   }
   if (e.key === 'Enter' && selectedFileId) renderPreview();
   if (e.key === 'e' && selectedFileId) {
@@ -979,8 +1039,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadData();
   // Restore file selection from hash
   const hash = decodeURIComponent(location.hash.slice(1));
-  if (hash && stackData.find((s) => s.id === hash)) {
+  const hashItem = hash && stackData.find((s) => s.id === hash);
+  if (hashItem) {
     selectedFileId = hash;
+    expandGroupForItem(hashItem);
+    expandItemAncestors(hashItem);
     renderTree();
     renderPreview();
   }

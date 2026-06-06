@@ -42,7 +42,7 @@ Both JS files use `// #region` / `// #endregion` markers for code organization.
 - Fonts: IBM Plex Mono (data/code), Playfair Display (headings)
 - Keyboard-driven: j/k navigation, t=theme, r=refresh, e=open in editor, ?=help
 - Port 3459 (cost=3458, marketplace=3460)
-- `zoom: 1.25` on body for proportional scaling
+- No global `zoom`; base font-size 14px to match sibling apps (cck)
 - No token/context budget estimation — only line/byte counts (deliberate decision)
 
 ## Prior Art
