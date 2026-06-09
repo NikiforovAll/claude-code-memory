@@ -19,7 +19,7 @@ function getArg(name) {
 
 const expandHome = (p) => (p || '').replace(/^~/, os.homedir());
 
-const PORT = getArg('port') || process.env.PORT || 3459;
+const PORT = getArg('port') || process.env.PORT || 3544;
 const AUTO_OPEN = process.argv.includes('--open');
 const claudeDirArg = getArg('dir');
 const CLAUDE_DIR = claudeDirArg ? expandHome(claudeDirArg) : path.join(os.homedir(), '.claude');

@@ -8,7 +8,7 @@ Dashboard for visualizing all memory sources that influence Claude Code behavior
 
 ## Commands
 
-- `npm start` — run server (port 3459)
+- `npm start` — run server (port 3544)
 - `npm run dev` — run with auto-open browser
 - `npx @biomejs/biome check public/app.js public/style.css` — lint
 - `npx @biomejs/biome format --write public/app.js public/style.css` — format
@@ -41,7 +41,7 @@ Both JS files use `// #region` / `// #endregion` markers for code organization.
 - Accent color: `#e86f33`
 - Fonts: IBM Plex Mono (data/code), Playfair Display (headings)
 - Keyboard-driven: j/k navigation, t=theme, r=refresh, e=open in editor, ?=help
-- Port 3459 (cost=3458, marketplace=3460)
+- Port 3544 (cost=3543, marketplace=3542)
 - No global `zoom`; base font-size 14px to match sibling apps (cck)
 - No token/context budget estimation — only line/byte counts (deliberate decision)
 

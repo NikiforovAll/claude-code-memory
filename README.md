@@ -12,7 +12,7 @@
 npx claude-code-memory-explorer --open
 ```
 
-Open http://localhost:3459 (or use `--open` to auto-launch the browser).
+Open http://localhost:3544 (or use `--open` to auto-launch the browser).
 
 That's it. No config — the dashboard reads your existing Claude Code memory files.
 
@@ -41,7 +41,7 @@ npx claude-code-memory-explorer --dir=~/.claude-work   # Custom Claude config di
 npx claude-code-memory-explorer --project=/path/to/project  # Specify project path
 ```
 
-If port 3459 is in use, the server falls back to a random available port.
+If port 3544 is in use, the server falls back to a random available port.
 
 ### Global install
 
