@@ -21,7 +21,7 @@ const expandHome = (p) => (p || '').replace(/^~/, os.homedir());
 
 const PORT = getArg('port') || process.env.PORT || 3544;
 const AUTO_OPEN = process.argv.includes('--open');
-const claudeDirArg = getArg('dir');
+const claudeDirArg = getArg('dir') || process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_DIR;
 const CLAUDE_DIR = claudeDirArg ? expandHome(claudeDirArg) : path.join(os.homedir(), '.claude');
 const projectDirArg = getArg('project');
 
@@ -334,7 +334,7 @@ function discoverMemorySources(projectPath) {
   //    project: <project>/.claude/agent-memory/<agent>/
   //    local:   <project>/.claude/agent-memory-local/<agent>/
   const agentMemoryRoots = [
-    { root: path.join(os.homedir(), '.claude', 'agent-memory'), agentScope: 'user' },
+    { root: path.join(CLAUDE_DIR, 'agent-memory'), agentScope: 'user' },
     { root: path.join(projectPath, '.claude', 'agent-memory'), agentScope: 'project' },
     { root: path.join(projectPath, '.claude', 'agent-memory-local'), agentScope: 'local' },
   ];
