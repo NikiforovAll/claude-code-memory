@@ -4,7 +4,11 @@
 [![license](https://img.shields.io/npm/l/claude-code-memory-explorer)](LICENSE)
 [![npm downloads](https://img.shields.io/npm/dm/claude-code-memory-explorer)](https://www.npmjs.com/package/claude-code-memory-explorer)
 
-> See everything Claude Code knows about your project — CLAUDE.md files, rules, auto memory, and imports.
+**[Live Demo & Docs](https://nikiforovall.blog/claude-code-memory/)**
+
+> See everything Claude Code knows about your project — CLAUDE.md files, rules, auto memory, agent memory, and imports.
+
+![Memory explorer overview](assets/shot-overview.png)
 
 ## Getting Started
 
@@ -12,81 +16,35 @@
 npx claude-code-memory-explorer --open
 ```
 
-Open http://localhost:3544 (or use `--open` to auto-launch the browser).
-
-That's it. No config — the dashboard reads your existing Claude Code memory files.
-
-![Dark theme](assets/main-dark.png)
-![Light theme](assets/main-light.png)
+That's it — no config. The dashboard scans the Claude Code memory locations for the current project and renders the full stack. Completely read-only; nothing leaves your machine.
 
 ## Features
 
-- **Full memory stack** — User CLAUDE.md, project CLAUDE.md, CLAUDE.local.md, rules, auto memory, and managed policies
-- **Import resolution** — Follows `@path/to/file.md` references and `[text](file.md)` markdown links up to 5 levels deep
-- **Rules inspection** — Shows path-scoped frontmatter (`paths`, `type`, `name`) with conditional load indicators
-- **Auto memory** — Visualizes MEMORY.md with startup cutoff line, on-demand topic files, and frontmatter badges
-- **Tree + preview** — Left panel grouped by scope (user/project/rules/memory), right panel with syntax-highlighted preview
-- **Keyboard-driven** — j/k navigation, h/l group jump, e to open in editor, t for theme, ? for help
-- **Resizable sidebar** — Drag handle between tree and preview, width persisted
-- **Browser history** — Back/forward navigates file selection, bookmarkable URLs
-- **Dark & light theme** — Dark default, light toggle with `t` key
-- **Hub integration** — Works as a tab in Claude Code Hub alongside Cost and Marketplace
+- **Full memory stack** — user CLAUDE.md, project CLAUDE.md, CLAUDE.local.md, rules, auto memory, agent memory, and managed policies in one view
+- **Import resolution** — follows `@path/to/file.md` references and `[text](file.md)` markdown links up to 5 levels deep, clickable in the preview
+- **Rules inspection** — path-scoped frontmatter (`paths`, `type`, `name`) with conditional load indicators
+- **Auto memory** — MEMORY.md with startup badge, on-demand topic files, and frontmatter badges
+- **Agent memory** — subagent persistent memory at user, project, and local scope, grouped per agent
+- **Keyboard-driven** — j/k navigation, h/l group jump, e to open in editor, Shift+P project picker, ? for help
+- **17 color themes** — Ember, Gruvbox, Catppuccin, Tokyo Night, Dracula, Nord, and more — each in light and dark, PWA installable
+- **Hub integration** — runs standalone or as a tab in [Claude Code Hub](https://github.com/NikiforovAll/claude-code-hub) alongside Kanban, Cost, and Marketplace
+
+![Path-scoped rule with frontmatter badges](assets/shot-rules.png)
+
+![Auto memory index with topic files](assets/shot-auto-memory.png)
+
+![Dark theme — Tokyo Night](assets/shot-dark-theme.png)
 
 ## Configuration
 
-```bash
-PORT=8080 npx claude-code-memory-explorer              # Custom port
-npx claude-code-memory-explorer --open                 # Auto-open browser
-npx claude-code-memory-explorer --dir=~/.claude-work   # Custom Claude config dir
-npx claude-code-memory-explorer --project=/path/to/project  # Specify project path
+```
+PORT=8080                Custom port (default: 3544, falls back if busy)
+--dir <path>             Custom Claude config dir (default: ~/.claude)
+--project <path>         Project to inspect (default: current directory)
+--open                   Open browser on start
 ```
 
-If port 3544 is in use, the server falls back to a random available port.
-
-### Global install
-
-```bash
-npm install -g claude-code-memory-explorer
-claude-code-memory-explorer --open
-```
-
-## How It Works
-
-Claude Code stores memory across multiple locations:
-
-| Source | Path | Load Behavior |
-|--------|------|---------------|
-| Managed policy | `/etc/claude-code/CLAUDE.md` | Always |
-| User CLAUDE.md | `~/.claude/CLAUDE.md` | Always |
-| Project CLAUDE.md | `./CLAUDE.md` or `./.claude/CLAUDE.md` | Always |
-| CLAUDE.local.md | `./CLAUDE.local.md` | Always |
-| Rules | `.claude/rules/*.md` | Conditional (path-scoped) |
-| Auto memory | `~/.claude/projects/<encoded>/memory/` | Startup (MEMORY.md) or on-demand |
-| Agent memory | `~/.claude/agent-memory/<agent>/`, `./.claude/agent-memory/<agent>/`, `./.claude/agent-memory-local/<agent>/` | Startup (MEMORY.md) or on-demand |
-
-The dashboard:
-1. **Scans** all memory locations — `~/.claude/`, ancestor directories, project rules, auto memory
-2. **Parses** YAML frontmatter in rules files for path globs and metadata
-3. **Resolves** `@import` chains recursively (max 5 levels), tracking both hard imports and soft markdown links
-4. **Groups** sources by scope with parent-child nesting for imports
-5. **Renders** with Highlight.js syntax highlighting — no build step, vanilla JS
-
-Nothing is modified — the dashboard is read-only.
-
-### Memory Path Encoding
-
-Claude Code encodes project paths for auto memory storage: `C:\Users\me\dev\myproject` becomes `C--Users-me-dev-myproject` under `~/.claude/projects/`. The dashboard tries exact match first, then falls back to substring matching.
-
-## FAQ
-
-**Does it modify any files?**
-No. Completely read-only — only reads markdown files from the Claude Code memory locations.
-
-**Does it work with Claude Code Hub?**
-Yes. Exposes `/hub-config` endpoint for hub tab integration.
-
-**Can I switch projects?**
-Yes. Use the project picker (Shift+P) or pass `?project=/path` as a URL parameter.
+The config dir can also be set via the `CLAUDE_CONFIG_DIR` environment variable. Switch projects at runtime with the picker (Shift+P) or `?project=/path`.
 
 ## License
 
