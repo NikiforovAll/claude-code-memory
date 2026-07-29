@@ -1062,6 +1062,10 @@ let hubProjectPath = null;
     lastApplied = dirPath;
     try {
       await putProject(dirPath);
+      // The hub does not persist its own scope, so a hub-pushed project must become the recent
+      // head here: after a hard refresh the boot path PUTs getRecentProjects()[0], which would
+      // otherwise clobber the server's hub-scoped project with the previous one.
+      addRecentProject(dirPath);
       await Promise.all([loadProject(), loadData()]);
     } catch (err) {
       lastApplied = null;
