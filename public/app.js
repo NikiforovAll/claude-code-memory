@@ -194,6 +194,20 @@ async function loadProject() {
   document.getElementById('projectBtn').title = projectData.path;
 }
 
+// Shared by the project picker, the boot restore, and the hub project shim. Throws with the
+// server's error message so callers can surface it directly.
+async function putProject(dirPath) {
+  const res = await fetch('/api/project', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: dirPath }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `${res.status}`);
+  }
+}
+
 function changeProject() {
   const current = document.getElementById('projectBtn').title;
   document.getElementById('projectPathInput').value = current;
@@ -209,20 +223,10 @@ async function submitProjectPicker() {
   btn.disabled = true;
   btn.textContent = 'Switching...';
   try {
-    const res = await fetch('/api/project', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: dirPath }),
-    });
-    if (!res.ok) {
-      const err = await res.json();
-      showToast(err.error, 'error');
-      return;
-    }
+    await putProject(dirPath);
     closeModal('projectPickerModal');
     addRecentProject(dirPath);
-    await loadProject();
-    await loadData();
+    await Promise.all([loadProject(), loadData()]);
     showToast('Project switched', 'success');
   } catch (err) {
     showToast(err.message, 'error');
@@ -977,14 +981,24 @@ document.addEventListener('keydown', (e) => {
     .catch(() => ({}));
   if (!cfg.enabled) return;
   window.__HUB__ = cfg;
+  const fwd = (e) =>
+    window.parent?.postMessage(
+      { type: 'hub:keydown', key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey },
+      '*',
+    );
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
-      window.parent?.postMessage({ type: 'hub:keydown', key: e.key }, '*');
+      fwd(e);
+    }
+    // Its own branch: the Alt+digit case below requires !ctrlKey.
+    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+      fwd(e);
     }
     if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
       e.preventDefault();
-      window.parent?.postMessage({ type: 'hub:keydown', key: e.key }, '*');
+      fwd(e);
     }
   });
 })();
@@ -994,10 +1008,12 @@ function _hubNavigate(app, url) {
   window.parent?.postMessage({ type: 'hub:navigate', app, url }, '*');
 }
 
+// Hoisted out of initHubTheme so initHubProject can share it.
+const hubOrigin = () => (window.__HUB__?.url ? new URL(window.__HUB__.url).origin : null);
+
 (function initHubTheme() {
   const getTheme = () => (document.body.classList.contains('light') ? 'light' : 'dark');
   const getColorTheme = () => document.body.dataset.colorTheme || 'ember';
-  const hubOrigin = () => (window.__HUB__?.url ? new URL(window.__HUB__.url).origin : null);
   // lastTheme/lastColorTheme are updated synchronously when applying a hub
   // message, so the (async) observer sees no diff and doesn't echo it back.
   let lastTheme = getTheme();
@@ -1025,6 +1041,32 @@ function _hubNavigate(app, url) {
   }).observe(document.body, {
     attributes: true,
     attributeFilter: ['class', 'data-color-theme'],
+  });
+})();
+
+// Set synchronously when the hub pushes a project, so the DOMContentLoaded restore below can't
+// let a stale localStorage recent win the race against the hub's choice.
+let hubProjectPath = null;
+
+(function initHubProject() {
+  let lastApplied = null;
+  window.addEventListener('message', async (e) => {
+    if (e.source !== window.parent || e.origin !== hubOrigin()) return;
+    if (e.data?.type !== 'hub:project') return;
+    const dirPath = e.data.project;
+    if (typeof dirPath !== 'string' || !dirPath) return;
+    hubProjectPath = dirPath;
+    // Dedupes against the last applied value, not just an in-flight one: the hub re-posts on
+    // every iframe load, so without this each load would PUT and reload twice.
+    if (lastApplied === dirPath) return;
+    lastApplied = dirPath;
+    try {
+      await putProject(dirPath);
+      await Promise.all([loadProject(), loadData()]);
+    } catch (err) {
+      lastApplied = null;
+      console.warn('hub:project failed:', err.message);
+    }
   });
 })();
 
@@ -1086,16 +1128,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Handle ?project= query param, else restore last-used project from localStorage
   const params = new URLSearchParams(location.search);
   let desiredProject = params.get('project');
-  if (!desiredProject) desiredProject = getRecentProjects()[0] || null;
+  // A hub-pushed project outranks the localStorage recent: initHub() is fire-and-forget at script
+  // eval, so hub:project can land before or during this block.
+  if (!desiredProject) desiredProject = hubProjectPath || getRecentProjects()[0] || null;
   if (desiredProject) {
     try {
-      const res = await fetch('/api/project', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: desiredProject }),
-      });
-      if (!res.ok && params.has('project')) showToast('Failed to switch project', 'error');
-    } catch {}
+      await putProject(desiredProject);
+    } catch {
+      if (params.has('project')) showToast('Failed to switch project', 'error');
+    }
+    // A push that arrived while the PUT above was in flight must still win.
+    if (hubProjectPath && hubProjectPath !== desiredProject) {
+      try {
+        await putProject(hubProjectPath);
+      } catch {}
+    }
   }
   if (params.has('project')) {
     params.delete('project');
