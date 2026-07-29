@@ -4,7 +4,7 @@
   "description": "Memory explorer dashboard for Claude Code",
   "main": "server.js",
   "bin": {
-    "claude-code-memory-explorer": "./server.js"
+    "claude-code-memory-explorer": "server.js"
   },
   "scripts": {
     "start": "node server.js",
