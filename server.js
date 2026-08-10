@@ -6,6 +6,8 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { execFileSync } = require('child_process');
+const { assertOpenTarget, openInEditor } = require('./lib/open-editor');
+const { createNetGuard } = require('./lib/net-guard');
 
 // #region CLI_ARGS
 
@@ -17,7 +19,7 @@ function getArg(name) {
   return process.argv[eqIdx + 1] || null;
 }
 
-const expandHome = (p) => (p || '').replace(/^~/, os.homedir());
+const expandHome = (p) => (typeof p === 'string' ? p : '').replace(/^~/, os.homedir());
 
 const PORT = getArg('port') || process.env.PORT || 3544;
 const AUTO_OPEN = process.argv.includes('--open');
@@ -441,7 +443,10 @@ function findMemoryDir(projectPath) {
 
 function findMainWorktreePath(projectPath) {
   try {
-    const out = execFileSync('git', ['-C', projectPath, 'rev-parse', '--git-common-dir'], {
+    // cwd rather than `-C <path>`: a projectPath beginning with a dash would
+    // otherwise be parsed by git as a flag instead of a directory.
+    const out = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      cwd: projectPath,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       timeout: 2000,
@@ -512,6 +517,13 @@ function stripContent(source) {
 // #region EXPRESS
 
 const app = express();
+
+// Mounted before express.json() so a rejected request never buffers a body.
+const net = createNetGuard({ appName: 'Claude Code Memory' });
+app.use(net.hostGuard);
+app.use(net.frameGuard);
+app.use(net.originGuard);
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -606,15 +618,12 @@ app.post('/api/memory/cleanup-orphans', (req, res) => {
 });
 
 app.post('/api/open-in-editor', (req, res) => {
-  const { path: filePath } = req.body;
-  if (!filePath) return res.status(400).json({ error: 'path required' });
-  const resolved = expandHome(filePath);
-  if (!fs.existsSync(resolved)) return res.status(404).json({ error: 'file not found' });
-  const { exec } = require('child_process');
-  exec(`code "${resolved}"`, (err) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    openInEditor([assertOpenTarget(expandHome(req.body.path))]);
     res.json({ ok: true });
-  });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
 });
 
 app.get('/api/summary', (_req, res) => {
@@ -696,27 +705,22 @@ app.get('/api/imports', (req, res) => {
 
 // #region STARTUP
 
-const server = app.listen(PORT, () => {
-  const addr = server.address();
-  const port = typeof addr === 'object' ? addr.port : PORT;
+const onReady = (port) => {
   console.log(`Claude Code Memory running at http://localhost:${port}`);
   console.log(`Project: ${currentProjectPath}`);
+  const warning = net.exposureWarning();
+  if (warning) console.log(warning);
   if (AUTO_OPEN) {
     import('open').then(m => m.default(`http://localhost:${port}`)).catch(() => {});
   }
-});
+};
+
+const server = net.listenLoopback(app, PORT, onReady);
 
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.log(`Port ${PORT} busy, trying random port...`);
-    const retry = app.listen(0, () => {
-      const addr = retry.address();
-      const port = typeof addr === 'object' ? addr.port : '?';
-      console.log(`Claude Code Memory running at http://localhost:${port}`);
-      if (AUTO_OPEN) {
-        import('open').then(m => m.default(`http://localhost:${port}`)).catch(() => {});
-      }
-    });
+    net.listenLoopback(app, 0, onReady);
   }
 });
 

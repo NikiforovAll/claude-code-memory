@@ -9,12 +9,23 @@ let selectedFileId = null;
 
 // #region UTILS
 
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' };
+
 function esc(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  if (s == null) return '';
+  return String(s).replace(/[&<>"'`]/g, (c) => HTML_ESCAPES[c]);
 }
 
-function escJs(s) {
-  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+// For a value landing inside a quoted JS string inside an HTML attribute —
+// onclick="fn('${escAttrJs(x)}')". The browser HTML-decodes the attribute before
+// the JS parser sees it, so the JS escape must happen first and be escaped in turn.
+function escAttrJs(value) {
+  const js = String(value == null ? '' : value)
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n');
+  return esc(js);
 }
 
 // #endregion UTILS
@@ -64,7 +75,7 @@ function linkifyImports(text, _sourceId) {
   const ph = (child, display) => {
     const token = `\x00LINK${placeholders.length}\x00`;
     placeholders.push(
-      `<a class="inline-import" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(display)}</a>`,
+      `<a class="inline-import" href="#" onclick="selectFile('${escAttrJs(child.id)}');return false" title="${esc(child.path)}">${esc(display)}</a>`,
     );
     return token;
   };
@@ -273,9 +284,9 @@ function renderRecentProjects() {
     recent
       .map(
         (p) =>
-          `<div class="recent-project-item" onclick="_selectRecentProject('${escJs(p)}')">` +
+          `<div class="recent-project-item" onclick="_selectRecentProject('${escAttrJs(p)}')">` +
           `<span>${esc(p)}</span>` +
-          `<button class="recent-project-remove" onclick="_removeRecentProject('${escJs(p)}', event)" title="Remove">&#10005;</button>` +
+          `<button class="recent-project-remove" onclick="_removeRecentProject('${escAttrJs(p)}', event)" title="Remove">&#10005;</button>` +
           `</div>`,
       )
       .join('');
@@ -385,9 +396,9 @@ function renderTree() {
     const children = childrenOf[item.id];
     const expanded = children && isItemExpanded(item.id);
     const chevron = children
-      ? `<span class="tree-chevron" onclick="_toggleItem(event,'${escJs(item.id)}')" title="${children.length} referenced">${expanded ? '▾' : '▸'}</span>`
+      ? `<span class="tree-chevron" onclick="_toggleItem(event,'${escAttrJs(item.id)}')" title="${children.length} referenced">${expanded ? '▾' : '▸'}</span>`
       : '<span class="tree-chevron-spacer"></span>';
-    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}${muted}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escJs(item.id)}')"${pad}>`;
+    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}${muted}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escAttrJs(item.id)}')"${pad}>`;
     h += chevron;
     h += `<span class="load-icon" title="${loadTitle}" style="color:var(--scope-${item.scope})">${loadIcon}</span>`;
     h += `<span class="file-name">${esc(item.name)}</span>`;
@@ -408,7 +419,7 @@ function renderTree() {
     const collapsed = collapsible && isGroupCollapsed(scope);
     const chevron = collapsible ? `<span class="group-chevron">${collapsed ? '\u25B8' : '\u25BE'}</span>` : '';
     const headerClass = collapsible ? 'tree-group-header tree-group-clickable' : 'tree-group-header';
-    const onclick = collapsible ? ` onclick="_toggleGroup('${escJs(scope)}')"` : '';
+    const onclick = collapsible ? ` onclick="_toggleGroup('${escAttrJs(scope)}')"` : '';
     html += `<div class="${headerClass}" data-scope="${esc(scope)}"${onclick}>${chevron}<span class="scope-dot" style="color:var(--scope-${scope})">\u25CF</span> ${esc(label)} <span style="opacity:0.5">${items.length}</span></div>`;
     if (collapsed) continue;
     if (scope === 'agent-memory') {
@@ -505,7 +516,7 @@ function selectFile(id, pushState = true) {
 }
 
 function scrollToSelected() {
-  const el = document.querySelector(`.tree-item[data-id="${selectedFileId}"]`);
+  const el = document.querySelector(`.tree-item[data-id="${CSS.escape(selectedFileId ?? '')}"]`);
   if (el) el.scrollIntoView({ block: 'nearest' });
 }
 
@@ -608,7 +619,7 @@ function renderMemoryIndexTable(entries) {
     const type = typeMatch ? typeMatch[1] : 'memory';
     const scopeColor = TYPE_COLORS[type] || 'memory';
     const nameHtml = child
-      ? `<a class="import-link" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(entry.name)}</a>`
+      ? `<a class="import-link" href="#" onclick="selectFile('${escAttrJs(child.id)}');return false" title="${esc(child.path)}">${esc(entry.name)}</a>`
       : `<span class="import-link unresolved" title="Not found: ${esc(entry.file)}">⚠ ${esc(entry.name)}</span>`;
     html += `<div class="memory-index-row">`;
     html += `<span class="scope-badge scope-${scopeColor} memory-index-type">${esc(type)}</span>`;
@@ -649,11 +660,11 @@ async function renderPreview() {
   if (isMemoryIndex(source)) {
     const broken = (source.unresolvedImports || []).length;
     if (broken) {
-      html += `<button class="action-btn small" onclick="_cleanupOrphans('${escJs(source.path)}')" title="Cleanup ${broken} orphaned refs"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M12 11v6"/></svg><span style="margin-left:3px">${broken}</span></button>`;
+      html += `<button class="action-btn small" onclick="_cleanupOrphans('${escAttrJs(source.path)}')" title="Cleanup ${broken} orphaned refs"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M12 11v6"/></svg><span style="margin-left:3px">${broken}</span></button>`;
     }
   }
-  html += `<button class="action-btn small" onclick="openInEditor('${escJs(source.path)}')" title="Open in VS Code"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M17.583 2.207a1.1 1.1 0 0 1 1.541.033l2.636 2.636a1.1 1.1 0 0 1 .033 1.541L10.68 17.53a1.1 1.1 0 0 1-.345.247l-4.56 1.903a.55.55 0 0 1-.725-.725l1.903-4.56a1.1 1.1 0 0 1 .247-.345zm.902 1.87-8.794 8.793-.946 2.268 2.268-.946 8.794-8.793z"/></svg></button>`;
-  html += `<button class="action-btn small" onclick="_confirmDeleteFile('${escJs(source.path)}','${escJs(source.name)}')" title="Delete file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
+  html += `<button class="action-btn small" onclick="openInEditor('${escAttrJs(source.path)}')" title="Open in VS Code"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M17.583 2.207a1.1 1.1 0 0 1 1.541.033l2.636 2.636a1.1 1.1 0 0 1 .033 1.541L10.68 17.53a1.1 1.1 0 0 1-.345.247l-4.56 1.903a.55.55 0 0 1-.725-.725l1.903-4.56a1.1 1.1 0 0 1 .247-.345zm.902 1.87-8.794 8.793-.946 2.268 2.268-.946 8.794-8.793z"/></svg></button>`;
+  html += `<button class="action-btn small" onclick="_confirmDeleteFile('${escAttrJs(source.path)}','${escAttrJs(source.name)}')" title="Delete file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
   html += '</div></div>';
 
   // Badges row
@@ -677,7 +688,7 @@ async function renderPreview() {
   if (!showMemoryTable && (children.length || unresolved.length)) {
     html += '<div class="preview-imports">';
     for (const child of children) {
-      html += `<a class="import-link" href="#" onclick="selectFile('${escJs(child.id)}');return false" title="${esc(child.path)}">${esc(child.name)}</a>`;
+      html += `<a class="import-link" href="#" onclick="selectFile('${escAttrJs(child.id)}');return false" title="${esc(child.path)}">${esc(child.name)}</a>`;
     }
     for (const u of unresolved) {
       html += `<span class="import-link unresolved" title="Not found: ${esc(u)}">⚠ ${esc(u)}</span>`;
@@ -981,11 +992,7 @@ document.addEventListener('keydown', (e) => {
     .catch(() => ({}));
   if (!cfg.enabled) return;
   window.__HUB__ = cfg;
-  const fwd = (e) =>
-    window.parent?.postMessage(
-      { type: 'hub:keydown', key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey },
-      '*',
-    );
+  const fwd = (e) => hubPost({ type: 'hub:keydown', key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey });
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
       e.preventDefault();
@@ -1005,11 +1012,18 @@ document.addEventListener('keydown', (e) => {
 
 function _hubNavigate(app, url) {
   if (!window.__HUB__?.enabled) return;
-  window.parent?.postMessage({ type: 'hub:navigate', app, url }, '*');
+  hubPost({ type: 'hub:navigate', app, url });
 }
 
 // Hoisted out of initHubTheme so initHubProject can share it.
 const hubOrigin = () => (window.__HUB__?.url ? new URL(window.__HUB__.url).origin : null);
+
+// Every send is addressed to the hub explicitly. With targetOrigin '*' any page that
+// framed this app also received the forwarded keystrokes and navigation intents.
+function hubPost(message) {
+  const origin = hubOrigin();
+  if (origin) window.parent?.postMessage(message, origin);
+}
 
 (function initHubTheme() {
   const getTheme = () => (document.body.classList.contains('light') ? 'light' : 'dark');
@@ -1036,8 +1050,7 @@ const hubOrigin = () => (window.__HUB__?.url ? new URL(window.__HUB__.url).origi
     if (t === lastTheme && ct === lastColorTheme) return;
     lastTheme = t;
     lastColorTheme = ct;
-    const origin = hubOrigin();
-    if (origin) window.parent.postMessage({ type: 'hub:theme', theme: t, colorTheme: ct }, origin);
+    hubPost({ type: 'hub:theme', theme: t, colorTheme: ct });
   }).observe(document.body, {
     attributes: true,
     attributeFilter: ['class', 'data-color-theme'],
