@@ -58,7 +58,7 @@ function highlightSource(text, fileName) {
       if (fm) {
         const fmHtml = hljs.highlight(fm[1], { language: 'yaml' }).value;
         const bodyHtml = hljs.highlight(fm[2], { language: 'markdown' }).value;
-        return `<span class="hl-frontmatter">---</span>\n${fmHtml}\n<span class="hl-frontmatter">---</span>\n${bodyHtml}`;
+        return `<span class="hl-fm-block"><span class="hl-frontmatter">---</span>\n${fmHtml}\n<span class="hl-frontmatter">---</span></span>\n${bodyHtml}`;
       }
     }
     return hljs.highlight(text, { language: lang }).value;
@@ -304,6 +304,12 @@ function toggleHelpModal() {
   document.getElementById('helpModal').classList.toggle('open');
 }
 
+// biome-ignore lint/correctness/noUnusedVariables: called from topbar markup
+function openAnalysisModal() {
+  document.getElementById('analysisModal').classList.add('open');
+  refreshAnalysis();
+}
+
 function bindModalKeys(inputId, modalId, submitFn) {
   document.getElementById(inputId).addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -321,12 +327,13 @@ function bindModalKeys(inputId, modalId, submitFn) {
 
 // #region RENDER_TREE
 
-const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory', 'agent-memory'];
+const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory', 'skill', 'agent-memory'];
 const SCOPE_LABELS = {
   policy: 'Managed Policy',
   user: 'User',
   project: 'Project',
   rule: 'Rules',
+  skill: 'Skills',
   memory: 'Auto Memory',
   'agent-memory': 'Agent Memory',
 };
@@ -667,14 +674,30 @@ async function renderPreview() {
   html += `<button class="action-btn small" onclick="_confirmDeleteFile('${escAttrJs(source.path)}','${escAttrJs(source.name)}')" title="Delete file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
   html += '</div></div>';
 
+  // Description gets its own full-width line; the rest stay as key:value chips
+  const fmDesc =
+    fileData.frontmatter && typeof fileData.frontmatter.description === 'string'
+      ? fileData.frontmatter.description.replace(/\s+/g, ' ')
+      : '';
+  if (fmDesc)
+    html += `<div class="preview-desc" title="Click to expand" onclick="this.classList.toggle('expanded')">${esc(fmDesc)}</div>`;
+
   // Badges row
   html += '<div class="preview-badges">';
   html += `<span class="load-badge load-${source.load}">${esc(source.load)}</span>`;
   html += `<span class="tag-badge">${source.lines}L / ${formatBytes(source.bytes)}</span>`;
   if (fileData.frontmatter) {
     for (const [k, v] of Object.entries(fileData.frontmatter)) {
-      const val = Array.isArray(v) ? v.join(', ') : v;
-      html += `<span class="tag-badge">${esc(k)}: ${esc(String(val))}</span>`;
+      if (k === 'description' && fmDesc) continue;
+      let val;
+      if (Array.isArray(v)) val = v.join(', ');
+      else if (v && typeof v === 'object')
+        val = Object.entries(v)
+          .map(([ck, cv]) => `${ck}=${cv}`)
+          .join(', ');
+      else val = String(v).replace(/\s+/g, ' ');
+      const shown = val.length > 72 ? `${val.slice(0, 69)}…` : val;
+      html += `<span class="tag-badge" title="${esc(`${k}: ${val}`)}"><span class="tag-k">${esc(k)}</span>${esc(shown)}</span>`;
     }
   }
   html += '</div>';
@@ -696,14 +719,15 @@ async function renderPreview() {
     html += '</div>';
   }
 
+  // File path lives inside the header as a muted line instead of its own band
+  html += `<div class="preview-filepath" title="${esc(source.path)}">${esc(source.path)}</div>`;
   html += '</div>';
-
-  // File path
-  html += `<div class="preview-filepath">${esc(source.path)}</div>`;
 
   const hl = (text) => {
     const { text: processed, placeholders } = linkifyImports(text, source.id);
-    return restorePlaceholders(highlightSource(processed, source.name), placeholders);
+    // Skill names aren't filenames (e.g. "aspire") — derive the language from the real file
+    const fileName = source.path ? source.path.split(/[\\/]/).pop() : source.name;
+    return restorePlaceholders(highlightSource(processed, fileName), placeholders);
   };
 
   if (showMemoryTable) {
@@ -848,6 +872,433 @@ async function openInEditor(filePath) {
 
 // #endregion RENDER_PREVIEW
 
+// #region ANALYZER
+
+let analysisPollTimer = null;
+let lastAnalysisSt = null;
+let analysisFindings = []; // findings of the rendered result, addressed by index from handlers
+let analysisFilter = 'all';
+let analysisDismissed = new Set(); // session-only; keys are `${kind}|${title}`
+let analysisTs = null; // reset dismissals + filter when a new result lands
+let analysisRunIdx = 0; // which run from the per-project history is shown (0 = latest)
+
+// Session-only identity of a finding, used by dismiss/copy/render alike
+function findingKey(f) {
+  return `${f.kind}|${f.title}`;
+}
+
+function resetAnalysisView(runIdx = 0) {
+  analysisRunIdx = runIdx;
+  analysisFilter = 'all';
+  analysisDismissed = new Set();
+}
+let scopePanelOpen = false;
+let scopeChecked = null; // Set of source ids; seeded with the default scope on first open
+const scopeCollapsed = new Set();
+const ANALYSIS_MODELS = ['sonnet', 'opus', 'fable'];
+let analysisModel = ANALYSIS_MODELS.includes(localStorage.getItem('analysisModel'))
+  ? localStorage.getItem('analysisModel')
+  : 'sonnet';
+
+function _setAnalysisModel(m) {
+  if (!ANALYSIS_MODELS.includes(m)) return;
+  analysisModel = m;
+  try {
+    localStorage.setItem('analysisModel', m);
+  } catch {}
+  rerenderAnalysis();
+}
+
+async function _runAnalysis(force, ids) {
+  try {
+    const body = { force: !!force, model: analysisModel };
+    if (Array.isArray(ids) && ids.length) body.ids = ids;
+    const res = await fetch('/api/memory/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok && res.status !== 409) {
+      const msg = await res
+        .json()
+        .then((e) => e.error)
+        .catch(() => `Analyze failed (${res.status})`);
+      showToast(msg, 'error');
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    if (data.cached) showToast('Memory unchanged — showing cached analysis. Use Re-run to force.', 'info');
+  } catch (err) {
+    showToast(err.message, 'error');
+    return;
+  }
+  refreshAnalysis();
+}
+
+async function refreshAnalysis() {
+  const el = document.getElementById('analysisSection');
+  if (!el) return;
+  let st;
+  try {
+    st = await fetchJSON('/api/memory/analysis');
+  } catch {
+    return;
+  }
+  if (st.ts !== analysisTs) {
+    analysisTs = st.ts;
+    resetAnalysisView();
+  }
+  lastAnalysisSt = st;
+  el.innerHTML = renderAnalysis(st);
+  applyScopeIndeterminate(el);
+  clearTimeout(analysisPollTimer);
+  if (st.running) analysisPollTimer = setTimeout(refreshAnalysis, 2500);
+}
+
+// Re-render from the cached state — used by scope/filter/dismiss handlers so a
+// checkbox click never triggers a server round-trip.
+function rerenderAnalysis() {
+  const el = document.getElementById('analysisSection');
+  if (!el || !lastAnalysisSt) return;
+  el.innerHTML = renderAnalysis(lastAnalysisSt);
+  applyScopeIndeterminate(el);
+}
+
+// `indeterminate` is a DOM property, not an attribute — set it after every innerHTML render.
+function applyScopeIndeterminate(el) {
+  for (const box of el.querySelectorAll('input[data-ind]')) box.indeterminate = true;
+}
+
+// #region ANALYZER_SCOPE
+
+const CLAUDE_MD_SCOPES = new Set(['project', 'local']);
+
+function analysisScopeGroups() {
+  return [
+    {
+      key: 'memory',
+      label: 'Auto memory',
+      cls: 't-memory',
+      tag: 'memory',
+      items: stackData.filter((s) => s.scope === 'memory'),
+    },
+    {
+      key: 'skill',
+      label: 'Skills',
+      cls: 't-skill',
+      tag: 'skill',
+      items: stackData.filter((s) => s.scope === 'skill' && !s.parentId),
+    },
+    {
+      key: 'claudemd',
+      label: 'CLAUDE.md',
+      cls: 't-claudemd',
+      tag: 'md',
+      items: stackData.filter((s) => CLAUDE_MD_SCOPES.has(s.scope) && !s.parentId),
+    },
+    {
+      key: 'agent',
+      label: 'Agent memory',
+      cls: 't-agent',
+      tag: 'agent',
+      items: stackData.filter((s) => s.scope === 'agent-memory'),
+    },
+  ].filter((g) => g.items.length);
+}
+
+function _toggleScopePanel() {
+  scopePanelOpen = !scopePanelOpen;
+  if (scopePanelOpen && !scopeChecked) {
+    // default scope = auto memory only (skills, agent memory, CLAUDE.md are opt-in)
+    scopeChecked = new Set(stackData.filter((s) => s.scope === 'memory').map((s) => s.id));
+  }
+  rerenderAnalysis();
+}
+
+function _toggleScopeGroup(key) {
+  const g = analysisScopeGroups().find((x) => x.key === key);
+  if (!g) return;
+  const allOn = g.items.every((s) => scopeChecked.has(s.id));
+  for (const s of g.items) {
+    if (allOn) scopeChecked.delete(s.id);
+    else scopeChecked.add(s.id);
+  }
+  rerenderAnalysis();
+}
+
+function _toggleScopeLeaf(id) {
+  if (scopeChecked.has(id)) scopeChecked.delete(id);
+  else scopeChecked.add(id);
+  rerenderAnalysis();
+}
+
+function _toggleScopeCollapse(key, e) {
+  e.stopPropagation();
+  if (scopeCollapsed.has(key)) scopeCollapsed.delete(key);
+  else scopeCollapsed.add(key);
+  rerenderAnalysis();
+}
+
+function _runScopedAnalysis() {
+  if (!scopeChecked?.size) return;
+  scopePanelOpen = false;
+  _runAnalysis(true, [...scopeChecked]);
+}
+
+function renderScopePanel() {
+  if (!scopePanelOpen || !scopeChecked) return '';
+  let html = '<div class="scope-panel open">';
+  html += '<div class="scope-panel-title">Select what to analyze</div>';
+  html += '<div class="scope-tree">';
+  for (const g of analysisScopeGroups()) {
+    const on = g.items.filter((s) => scopeChecked.has(s.id)).length;
+    const collapsed = scopeCollapsed.has(g.key);
+    html += `<div class="scope-group${collapsed ? ' collapsed' : ''}">`;
+    html += `<div class="scope-row" onclick="_toggleScopeGroup('${g.key}')">`;
+    html += `<span class="scope-caret" onclick="_toggleScopeCollapse('${g.key}', event)">${collapsed ? '▸' : '▾'}</span>`;
+    html += `<input type="checkbox" ${on === g.items.length ? 'checked' : ''} ${on > 0 && on < g.items.length ? 'data-ind="1"' : ''} onclick="event.preventDefault()">`;
+    html += `<span class="scope-tag ${g.cls}">${g.tag}</span>`;
+    html += `<span>${esc(g.label)}</span>`;
+    html += `<span class="scope-meta">${on}/${g.items.length}</span>`;
+    html += '</div>';
+    html += '<div class="scope-children">';
+    for (const s of g.items) {
+      html += `<div class="scope-row" onclick="_toggleScopeLeaf('${escAttrJs(s.id)}')">`;
+      html += `<input type="checkbox" ${scopeChecked.has(s.id) ? 'checked' : ''} onclick="event.preventDefault()">`;
+      html += `<span>${esc(s.name)}</span>`;
+      html += `<span class="scope-meta">${s.lines}L</span>`;
+      html += '</div>';
+    }
+    html += '</div></div>';
+  }
+  html += '</div>';
+  const n = scopeChecked.size;
+  html += '<div class="scope-footer">';
+  html += `<span class="scope-hint">${n} file${n === 1 ? '' : 's'} selected</span>`;
+  html += '<div class="scope-model" title="Model for this analysis">';
+  for (const m of ANALYSIS_MODELS)
+    html += `<button class="scope-model-opt${m === analysisModel ? ' active' : ''}" onclick="_setAnalysisModel('${m}')">${m}</button>`;
+  html += '</div>';
+  html += '<button class="action-btn small" onclick="_toggleScopePanel()">Cancel</button>';
+  html += `<button class="action-btn small primary" ${n ? '' : 'disabled'} onclick="_runScopedAnalysis()">Run analysis (${n})</button>`;
+  html += '</div></div>';
+  return html;
+}
+
+// #endregion ANALYZER_SCOPE
+
+// #region ANALYZER_ACTIONS
+
+function memoryDirPath() {
+  const idx = stackData.find((s) => s.scope === 'memory' && s.name === 'MEMORY.md');
+  return idx ? idx.path.replace(/[\\/][^\\/]+$/, '') : null;
+}
+
+function findingPrompt(f) {
+  const dir = memoryDirPath();
+  const lines = [
+    dir
+      ? `In the Claude Code auto-memory at ${dir}, apply this fix:`
+      : "In this project's Claude Code auto-memory, apply this fix:",
+    '',
+    `Finding (${f.kind}, ${f.severity}): ${f.title}`,
+    f.detail,
+    '',
+    `Action: ${f.suggestion}`,
+  ];
+  if ((f.files || []).length) lines.push(`Files: ${f.files.join(', ')}`);
+  lines.push('', 'Update MEMORY.md index lines if files are added, renamed, or removed.');
+  return lines.join('\n');
+}
+
+function copyText(text, okMsg) {
+  navigator.clipboard
+    .writeText(text)
+    .then(() => showToast(okMsg, 'info'))
+    .catch(() => showToast('Clipboard unavailable', 'error'));
+}
+
+function _copyFindingPrompt(idx) {
+  const f = analysisFindings[idx];
+  if (f) copyText(findingPrompt(f), 'Prompt copied — paste into any Claude Code session');
+}
+
+function _copyAllFindings() {
+  const live = analysisFindings.filter((f) => !analysisDismissed.has(findingKey(f)));
+  if (!live.length) return;
+  copyText(live.map(findingPrompt).join('\n\n---\n\n'), `${live.length} prompts copied`);
+}
+
+function _dismissFinding(btn, idx) {
+  const f = analysisFindings[idx];
+  if (!f) return;
+  const card = btn.closest('.analysis-card');
+  card.style.maxHeight = `${card.offsetHeight}px`;
+  requestAnimationFrame(() => card.classList.add('leaving'));
+  setTimeout(() => {
+    analysisDismissed.add(findingKey(f));
+    rerenderAnalysis();
+  }, 280);
+}
+
+function _restoreDismissed() {
+  analysisDismissed = new Set();
+  rerenderAnalysis();
+}
+
+function _setAnalysisFilter(sev) {
+  analysisFilter = sev;
+  rerenderAnalysis();
+}
+
+// #endregion ANALYZER_ACTIONS
+
+function analysisTimeAgo(ts) {
+  const min = Math.round((Date.now() - ts) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.round(min / 60);
+  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
+const COPY_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const DISMISS_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>';
+const FILE_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>';
+
+function fileChipScope(source) {
+  if (!source) return '';
+  return source.scope === 'agent-memory' ? 'agent' : source.scope;
+}
+
+function renderAnalysisHead(st, r, ts) {
+  const meta = [];
+  if (ts) meta.push(analysisTimeAgo(ts));
+  if (r?.costUsd != null) meta.push(`$${r.costUsd.toFixed(2)}`);
+  if (r?.durationMs != null) meta.push(`${Math.round(r.durationMs / 1000)}s`);
+  if (r?.model) meta.push(r.model);
+  if (r?.scopeDesc) meta.push(`scope: ${r.scopeDesc}`);
+  if (st.stale && analysisRunIdx === 0) meta.push('memory changed since');
+  let html = '<div class="analysis-head">';
+  html += '<span class="analysis-title">Claude analysis</span>';
+  html += `<span class="analysis-meta">${esc(meta.join(' · '))}</span>`;
+  if (r && (r.findings || []).length)
+    html += '<button class="action-btn small" onclick="_copyAllFindings()">Copy all</button>';
+  html += `<button class="action-btn small primary" onclick="_toggleScopePanel()">New analysis…</button>`;
+  html += '</div>';
+  html += renderRunsStrip(st);
+  html += renderScopePanel();
+  return html;
+}
+
+function _setAnalysisRun(i) {
+  resetAnalysisView(i);
+  rerenderAnalysis();
+}
+
+async function _deleteAnalysisRun(ev, ts) {
+  ev.stopPropagation();
+  await fetch('/api/memory/analysis/delete-run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ts }),
+  });
+  resetAnalysisView();
+  analysisTs = null; // force refreshAnalysis to re-adopt the new latest run
+  refreshAnalysis();
+}
+
+// Past runs for this project (newest first).
+function renderRunsStrip(st) {
+  const runs = st.runs || [];
+  if (!runs.length) return '';
+  let html = '<div class="runs-strip"><span class="runs-label">runs</span>';
+  runs.forEach((run, i) => {
+    const r = run.result || {};
+    const bits = [analysisTimeAgo(run.ts)];
+    if (r.model) bits.push(r.model);
+    if (r.costUsd != null) bits.push(`$${r.costUsd.toFixed(2)}`);
+    html += `<span class="run-chip${i === analysisRunIdx ? ' active' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(r.scopeDesc || '')}">${esc(bits.join(' · '))}<button class="run-chip-x" onclick="_deleteAnalysisRun(event, ${run.ts})" title="Delete this run">×</button></span>`;
+  });
+  html += '</div>';
+  return html;
+}
+
+function renderAnalysis(st) {
+  if (st.running) {
+    return '<div class="analysis-box"><div class="analysis-status"><span class="analysis-spinner"></span>Analyzing memory with Claude Code — usually 30–90s…</div></div>';
+  }
+  const runs = st.runs || [];
+  const shown = runs[analysisRunIdx];
+  let html = '<div class="analysis-box">';
+  html += renderAnalysisHead(st, shown?.result, shown?.ts);
+  if (st.error) {
+    html += `<div class="analysis-status analysis-status-error">${esc(st.error)} <button class="action-btn small" onclick="_runAnalysis(true)">Retry</button></div></div>`;
+    return html;
+  }
+  if (!shown) {
+    html += '<div class="analysis-empty">No analysis yet — pick a scope and run one.</div></div>';
+    return html;
+  }
+  const r = shown.result;
+  analysisFindings = r.findings || [];
+  const byName = Object.fromEntries(stackData.map((s) => [s.name, s]));
+  if (r.summary) html += `<div class="analysis-summary">${esc(r.summary)}</div>`;
+
+  const live = analysisFindings.filter((f) => !analysisDismissed.has(findingKey(f)));
+  const count = (sev) => live.filter((f) => f.severity === sev).length;
+  if (analysisFindings.length) {
+    html += '<div class="sev-strip">';
+    for (const sev of ['all', 'high', 'med', 'low']) {
+      const n = sev === 'all' ? live.length : count(sev);
+      html += `<button class="sev-pill${analysisFilter === sev ? ' active' : ''}" data-sev="${sev}" onclick="_setAnalysisFilter('${sev}')">`;
+      if (sev !== 'all') html += '<span class="dot"></span>';
+      html += `${sev} ${n}</button>`;
+    }
+    if (analysisDismissed.size) {
+      html += `<span class="dismissed-note">${analysisDismissed.size} dismissed · <a onclick="_restoreDismissed()">restore</a></span>`;
+    }
+    html += '</div>';
+  }
+
+  const visible = live.filter((f) => analysisFilter === 'all' || f.severity === analysisFilter);
+  if (!analysisFindings.length) html += '<div class="analysis-empty">No issues found.</div>';
+  else if (!visible.length) html += '<div class="analysis-empty">Nothing here — filtered out or dismissed.</div>';
+  for (const f of visible) {
+    const idx = analysisFindings.indexOf(f);
+    html += `<div class="analysis-card ${esc(`sev-${f.severity}`)}">`;
+    html += '<div class="analysis-card-head">';
+    html += `<span class="kind-badge ${esc(`kind-${f.kind}`)}">${esc(f.kind)}</span>`;
+    html += `<span class="analysis-card-title">${esc(f.title)}</span>`;
+    html += '<span class="card-actions">';
+    html += `<button class="card-btn" onclick="_copyFindingPrompt(${idx})" title="Copy an agent-ready instruction for this finding">${COPY_ICON}Copy prompt</button>`;
+    html += `<button class="card-btn" onclick="_dismissFinding(this, ${idx})" title="Drop this finding from the list">${DISMISS_ICON}Dismiss</button>`;
+    html += '</span></div>';
+    const files = f.files || [];
+    html += '<div class="analysis-card-files">';
+    if (!files.length) html += '<span class="no-files">no file — new memory suggested</span>';
+    for (const fn of files) {
+      const child = byName[fn];
+      const scopeTag = fileChipScope(child);
+      if (child) {
+        html += `<a class="file-chip" href="#" onclick="closeModal('analysisModal');selectFile('${escAttrJs(child.id)}');return false" title="${esc(child.path)}">${FILE_ICON}${esc(fn)}<span class="fscope fscope-${esc(scopeTag)}">${esc(scopeTag)}</span></a>`;
+      } else {
+        html += `<span class="file-chip">${FILE_ICON}${esc(fn)}</span>`;
+      }
+    }
+    html += '</div>';
+    html += `<div class="analysis-card-detail">${esc(f.detail)}</div>`;
+    html += `<div class="analysis-card-suggestion">${esc(f.suggestion)}</div>`;
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+// #endregion ANALYZER
+
 // #region RENDER_BUDGET
 
 function renderBudget() {
@@ -855,32 +1306,30 @@ function renderBudget() {
 
   // Summary stat cards
   document.getElementById('statFiles').textContent = summaryData.totalFiles;
-  document.getElementById('statLines').textContent = summaryData.totalLines.toLocaleString();
+  document.getElementById('statChars').textContent = summaryData.totalChars.toLocaleString();
   document.getElementById('statBytes').textContent = formatBytes(summaryData.totalBytes);
   document.getElementById('statAlways').textContent = summaryData.alwaysLoaded;
 
   // Budget text
   document.getElementById('budgetText').textContent =
-    `${summaryData.totalLines.toLocaleString()} lines / ${formatBytes(summaryData.totalBytes)}`;
+    `${summaryData.totalChars.toLocaleString()} chars / ${formatBytes(summaryData.totalBytes)}`;
 
-  // Budget segments — proportional by lines per scope
+  // Budget segments — proportional by chars per scope; the server's summary owns
+  // the footprint filter, the client only renders its per-scope totals.
   const segContainer = document.getElementById('budgetSegments');
-  if (!stackData.length) {
-    segContainer.innerHTML = '';
-    return;
-  }
-
-  const scopeTotals = {};
-  for (const s of stackData) {
-    scopeTotals[s.scope] = (scopeTotals[s.scope] || 0) + (s.lines || 0);
-  }
-  const totalLines = summaryData.totalLines || 1;
+  const scopeTotals = summaryData.scopeChars || {};
+  const skillDescChars = summaryData.skillDesc?.chars || 0;
+  const totalChars = summaryData.totalChars || 1;
   let html = '';
   for (const scope of SCOPE_ORDER) {
-    const lines = scopeTotals[scope];
-    if (!lines) continue;
-    const pct = (lines / totalLines) * 100;
-    html += `<div class="budget-segment" style="width:${pct}%;background:var(--scope-${scope})" title="${SCOPE_LABELS[scope] || scope}: ${lines} lines (${pct.toFixed(1)}%)"></div>`;
+    const chars = scopeTotals[scope];
+    if (!chars) continue;
+    const pct = (chars / totalChars) * 100;
+    html += `<div class="budget-segment" style="width:${pct}%;background:var(--scope-${scope})" title="${SCOPE_LABELS[scope] || scope}: ${chars.toLocaleString()} chars (${pct.toFixed(1)}%)"></div>`;
+  }
+  if (skillDescChars) {
+    const pct = (skillDescChars / totalChars) * 100;
+    html += `<div class="budget-segment" style="width:${pct}%;background:var(--scope-skill)" title="Skill descriptions (${summaryData.skillDesc.count} enabled): ${skillDescChars.toLocaleString()} chars (${pct.toFixed(1)}%)"></div>`;
   }
   segContainer.innerHTML = html;
 }
