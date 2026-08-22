@@ -1054,10 +1054,10 @@ function renderScopePanel() {
     const on = g.items.filter((s) => scopeChecked.has(s.id)).length;
     const collapsed = scopeCollapsed.has(g.key);
     html += `<div class="scope-group${collapsed ? ' collapsed' : ''}">`;
-    html += `<div class="scope-row" onclick="_toggleScopeGroup('${g.key}')">`;
-    html += `<span class="scope-caret" onclick="_toggleScopeCollapse('${g.key}', event)">${collapsed ? '▸' : '▾'}</span>`;
+    html += `<div class="scope-row" onclick="_toggleScopeGroup('${escAttrJs(g.key)}')">`;
+    html += `<span class="scope-caret" onclick="_toggleScopeCollapse('${escAttrJs(g.key)}', event)">${collapsed ? '▸' : '▾'}</span>`;
     html += `<input type="checkbox" ${on === g.items.length ? 'checked' : ''} ${on > 0 && on < g.items.length ? 'data-ind="1"' : ''} onclick="event.preventDefault()">`;
-    html += `<span class="scope-tag ${g.cls}">${g.tag}</span>`;
+    html += `<span class="scope-tag ${esc(g.cls)}">${g.tag}</span>`;
     html += `<span>${esc(g.label)}</span>`;
     html += `<span class="scope-meta">${on}/${g.items.length}</span>`;
     html += '</div>';
@@ -1077,7 +1077,7 @@ function renderScopePanel() {
   html += `<span class="scope-hint">${n} file${n === 1 ? '' : 's'} selected</span>`;
   html += '<div class="scope-model" title="Model for this analysis">';
   for (const m of ANALYSIS_MODELS)
-    html += `<button class="scope-model-opt${m === analysisModel ? ' active' : ''}" onclick="_setAnalysisModel('${m}')">${m}</button>`;
+    html += `<button class="scope-model-opt${m === analysisModel ? ' active' : ''}" onclick="_setAnalysisModel('${escAttrJs(m)}')">${m}</button>`;
   html += '</div>';
   html += '<button class="action-btn small" onclick="_toggleScopePanel()">Cancel</button>';
   html += `<button class="action-btn small primary" ${n ? '' : 'disabled'} onclick="_runScopedAnalysis()">Run analysis (${n})</button>`;
@@ -1220,7 +1220,7 @@ function renderRunsStrip(st) {
     const bits = [analysisTimeAgo(run.ts)];
     if (r.model) bits.push(r.model);
     if (r.costUsd != null) bits.push(`$${r.costUsd.toFixed(2)}`);
-    html += `<span class="run-chip${i === analysisRunIdx ? ' active' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(r.scopeDesc || '')}">${esc(bits.join(' · '))}<button class="run-chip-x" onclick="_deleteAnalysisRun(event, ${run.ts})" title="Delete this run">×</button></span>`;
+    html += `<span class="run-chip${i === analysisRunIdx ? ' active' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(r.scopeDesc || '')}">${esc(bits.join(' · '))}<button class="run-chip-x" onclick="_deleteAnalysisRun(event, ${escAttrJs(run.ts)})" title="Delete this run">×</button></span>`;
   });
   html += '</div>';
   return html;
@@ -1253,7 +1253,7 @@ function renderAnalysis(st) {
     html += '<div class="sev-strip">';
     for (const sev of ['all', 'high', 'med', 'low']) {
       const n = sev === 'all' ? live.length : count(sev);
-      html += `<button class="sev-pill${analysisFilter === sev ? ' active' : ''}" data-sev="${sev}" onclick="_setAnalysisFilter('${sev}')">`;
+      html += `<button class="sev-pill${analysisFilter === sev ? ' active' : ''}" data-sev="${esc(sev)}" onclick="_setAnalysisFilter('${escAttrJs(sev)}')">`;
       if (sev !== 'all') html += '<span class="dot"></span>';
       html += `${sev} ${n}</button>`;
     }
@@ -1329,7 +1329,7 @@ function renderBudget() {
   }
   if (skillDescChars) {
     const pct = (skillDescChars / totalChars) * 100;
-    html += `<div class="budget-segment" style="width:${pct}%;background:var(--scope-skill)" title="Skill descriptions (${summaryData.skillDesc.count} enabled): ${skillDescChars.toLocaleString()} chars (${pct.toFixed(1)}%)"></div>`;
+    html += `<div class="budget-segment" style="width:${pct}%;background:var(--scope-skill)" title="Skill descriptions (${esc(summaryData.skillDesc.count)} enabled): ${skillDescChars.toLocaleString()} chars (${pct.toFixed(1)}%)"></div>`;
   }
   segContainer.innerHTML = html;
 }
