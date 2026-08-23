@@ -1,4 +1,4 @@
-# Claude Code Memory
+# Claude Code Memory Diagnoser
 
 [![npm version](https://img.shields.io/npm/v/claude-code-memory-explorer)](https://www.npmjs.com/package/claude-code-memory-explorer)
 [![license](https://img.shields.io/npm/l/claude-code-memory-explorer)](LICENSE)
@@ -6,9 +6,9 @@
 
 **[Live Demo & Docs](https://nikiforovall.blog/claude-code-memory/)**
 
-> See everything Claude Code knows about your project — CLAUDE.md files, rules, auto memory, agent memory, and imports.
+> See everything Claude Code knows about your project — and find what's stale, false, or conflicting.
 
-![Memory explorer overview](assets/shot-overview.png)
+![Memory Diagnoser overview](assets/overview.png)
 
 ## Getting Started
 
@@ -16,24 +16,15 @@
 npx claude-code-memory-explorer --open
 ```
 
-That's it — no config. The dashboard scans the Claude Code memory locations for the current project and renders the full stack. Completely read-only; nothing leaves your machine.
+No config. The dashboard scans the Claude Code memory locations for the current project and renders the full stack. Browsing is read-only; nothing leaves your machine.
 
 ## Features
 
-- **Full memory stack** — user CLAUDE.md, project CLAUDE.md, CLAUDE.local.md, rules, auto memory, agent memory, and managed policies in one view
-- **Import resolution** — follows `@path/to/file.md` references and `[text](file.md)` markdown links up to 5 levels deep, clickable in the preview
-- **Rules inspection** — path-scoped frontmatter (`paths`, `type`, `name`) with conditional load indicators
-- **Auto memory** — MEMORY.md with startup badge, on-demand topic files, and frontmatter badges
-- **Agent memory** — subagent persistent memory at user, project, and local scope, grouped per agent
-- **Keyboard-driven** — j/k navigation, h/l group jump, e to open in editor, Shift+P project picker, ? for help
-- **17 color themes** — Ember, Gruvbox, Catppuccin, Tokyo Night, Dracula, Nord, and more — each in light and dark, PWA installable
-- **Hub integration** — runs standalone or as a tab in [Claude Code Hub](https://github.com/NikiforovAll/claude-code-hub) alongside Kanban, Cost, and Marketplace
-
-![Path-scoped rule with frontmatter badges](assets/shot-rules.png)
-
-![Auto memory index with topic files](assets/shot-auto-memory.png)
-
-![Dark theme — Tokyo Night](assets/shot-dark-theme.png)
+- **Full memory stack** — user/project/local CLAUDE.md, rules, auto memory, agent memory, managed policies, and resolved `@import` chains in one view
+- **Claude analysis** — audit memory files with headless Claude: health score, per-file findings (stale, false, or conflicting claims) with suggested fixes, merged across runs
+- **Keyboard-driven** — j/k navigation, e to open in editor, Shift+P project picker, ? for help
+- **17 color themes** — each in light and dark, PWA installable
+- **Hub integration** — runs standalone or as a tab in [Claude Code Hub](https://github.com/NikiforovAll/claude-code-hub)
 
 ## Configuration
 
