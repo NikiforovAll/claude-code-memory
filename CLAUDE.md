@@ -12,14 +12,16 @@ Dashboard for visualizing all memory sources that influence Claude Code behavior
 - `npm run dev` — run with auto-open browser
 - `npx @biomejs/biome check public/app.js public/style.css` — lint
 - `npx @biomejs/biome format --write public/app.js public/style.css` — format
+- `npm test` — node test runner over `test/*.test.js`
 
 ## Architecture
 
 Single-file Express backend + vanilla JS frontend. No build step, no framework.
 
-- **`server.js`** — Express server with two main responsibilities:
+- **`server.js`** — Express server with three main responsibilities:
   1. **Filesystem scanning** (`discoverMemorySources`) — walks `~/.claude/`, ancestor directories, project `.claude/rules/`, and auto memory dirs to build the full memory source stack
   2. **API endpoints** — `/api/stack`, `/api/summary`, `/api/file`, `/api/rules/match`, `/api/imports` etc.
+  3. **Analyzer** (the `ANALYZER` region, the largest block in the file) — runs headless `claude -p` audits of the memory stack with reviewer subagents, persists each run per project, and serves them over `/api/memory/analyze`, `/api/memory/analysis`, `/api/memory/analysis/dismiss`, and `/api/memory/analysis/delete-run`
 - **`public/app.js`** — SPA with tree panel (left) + preview panel (right) split layout. Fetches from API, renders tree grouped by scope, shows syntax-highlighted preview with frontmatter badges and clickable `@import` links.
 - **`public/style.css`** — CSS variables on `:root` (dark default), `body.light` overrides. Scope colors: user=blue, project=green, local=yellow, rule=purple, memory=orange, policy=red.
 
@@ -27,7 +29,7 @@ Both JS files use `// #region` / `// #endregion` markers for code organization.
 
 ## Key Server Concepts
 
-- **Project path encoding**: Claude Code stores auto memory in `~/.claude/projects/<encoded-path>/memory/`. The encoding replaces `/` with `-` and strips `:` from drive letters. `findMemoryDir()` tries exact match first, then resolves git linked worktrees to the main worktree's memory via `git rev-parse --git-common-dir`, then falls back to substring matching.
+- **Project path encoding**: Claude Code stores auto memory in `~/.claude/projects/<encoded-path>/memory/`. `encodeProjectPath()` replaces both `/` and `:` with `-` (a Windows drive letter keeps its position, it is not stripped). `findMemoryDir()` tries exact match first, then resolves git linked worktrees to the main worktree memory via `git rev-parse --git-common-dir`, then falls back to substring matching.
 - **Custom projects base**: `getProjectsBaseDir()` honors the `autoMemoryDirectory` key from `~/.claude/settings.json` (user scope only — matches Claude Code, which rejects this key from project/local for security). When set, it replaces `<CLAUDE_DIR>/projects` as the base for the encoded-project lookup in `findMemoryDir()`.
 - **Agent persistent memory**: Subagents declared with `memory: user|project|local` frontmatter get a directory at `~/.claude/agent-memory/<agent>/`, `<project>/.claude/agent-memory/<agent>/`, or `<project>/.claude/agent-memory-local/<agent>/`. Each follows the auto-memory layout (`MEMORY.md` startup-loaded with 200-line / 25 KB cap, siblings on-demand). Sources carry `agentScope` and `agentName` fields; the tree groups them under "Agent Memory" with a per-agent sub-header.
 - **Import resolution**: `@path/to/file.md` references are parsed from content. `resolveExistingImports()` resolves paths and filters out non-existent files. Imported files are recursively added to the stack (max 5 levels).
@@ -43,7 +45,7 @@ Both JS files use `// #region` / `// #endregion` markers for code organization.
 - Keyboard-driven: j/k navigation, t=theme, r=refresh, e=open in editor, ?=help
 - Port 3544 (cost=3543, marketplace=3542)
 - No global `zoom`; base font-size 14px to match sibling apps (cck)
-- No token/context budget estimation — only line/byte counts (deliberate decision)
+- No token estimation — line/byte/char counts only (deliberate decision); `/api/summary` returns `totalChars`/`scopeChars` for the client budget bar
 
 ## Prior Art
 
