@@ -4,6 +4,7 @@ let projectData = null;
 let stackData = [];
 let summaryData = null;
 let selectedFileId = null;
+let healthViewOpen = true; // health dashboard is the default view; selecting a file exits it
 
 // #endregion STATE
 
@@ -304,10 +305,11 @@ function toggleHelpModal() {
   document.getElementById('helpModal').classList.toggle('open');
 }
 
-// biome-ignore lint/correctness/noUnusedVariables: called from topbar markup
-function openAnalysisModal() {
-  document.getElementById('analysisModal').classList.add('open');
-  refreshAnalysis();
+function openHealthView() {
+  healthViewOpen = !healthViewOpen;
+  document.getElementById('analyzeBtn')?.classList.toggle('active', healthViewOpen);
+  renderPreview();
+  if (healthViewOpen) refreshAnalysis();
 }
 
 function bindModalKeys(inputId, modalId, submitFn) {
@@ -342,6 +344,7 @@ const LOAD_ICONS = {
   startup: '\u25D2',
   conditional: '\u25CB',
   ondemand: '\u25CC',
+  tree: '\u25CE',
   import: '@',
   link: '\u2197',
 };
@@ -350,6 +353,7 @@ const LOAD_TITLES = {
   startup: 'Loaded at startup (partial)',
   conditional: 'Conditional (path-scoped)',
   ondemand: 'On-demand',
+  tree: 'Loaded progressively (when Claude works in its directory)',
   import: 'Imported by parent file',
   link: 'Referenced via markdown link (not auto-loaded)',
 };
@@ -397,7 +401,8 @@ function renderTree() {
     const loadIcon = LOAD_ICONS[item.load] || '';
     const loadTitle = LOAD_TITLES[item.load] || item.load;
     const meta = `${item.lines}L`;
-    const isConditional = item.load === 'conditional' || item.load === 'ondemand' || item.load === 'link';
+    const isConditional =
+      item.load === 'conditional' || item.load === 'ondemand' || item.load === 'link' || item.load === 'tree';
     const pad = indent ? ` style="padding-left:${12 + indent * 16}px"` : '';
     const muted = item.scope === 'agent-memory' ? ' tree-agent-item' : '';
     const children = childrenOf[item.id];
@@ -405,10 +410,19 @@ function renderTree() {
     const chevron = children
       ? `<span class="tree-chevron" onclick="_toggleItem(event,'${escAttrJs(item.id)}')" title="${children.length} referenced">${expanded ? '▾' : '▸'}</span>`
       : '<span class="tree-chevron-spacer"></span>';
-    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}${muted}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escAttrJs(item.id)}')"${pad}>`;
+    const fp = footprintHighlight && footprintHit(item) ? ' fp-hit' : '';
+    let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}${muted}${fp}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escAttrJs(item.id)}')"${pad}>`;
     h += chevron;
     h += `<span class="load-icon" title="${loadTitle}" style="color:var(--scope-${item.scope})">${loadIcon}</span>`;
     h += `<span class="file-name">${esc(item.name)}</span>`;
+    const hs = treeHealth.get(item.id);
+    if (hs) {
+      const sev = hs.high ? 'high' : hs.med ? 'med' : 'low';
+      const n = hs.high || hs.med || hs.low;
+      h += `<span class="tree-health th-${esc(sev)}" title="${esc(hs.high)} high · ${esc(hs.med)} med · ${esc(hs.low)} low — open Health for details">${n}</span>`;
+    } else if (auditedIds.has(item.id)) {
+      h += '<span class="tree-health th-clean" title="Audited — no findings"></span>';
+    }
     h += `<span class="file-meta">${meta}</span>`;
     h += '</div>';
     if (expanded) {
@@ -509,6 +523,10 @@ function pushFileState(id) {
 }
 
 function selectFile(id, pushState = true) {
+  if (healthViewOpen) {
+    healthViewOpen = false;
+    document.getElementById('analyzeBtn')?.classList.remove('active');
+  }
   selectedFileId = selectedFileId === id ? null : id;
   if (selectedFileId) {
     const item = stackData.find((s) => s.id === selectedFileId);
@@ -644,6 +662,12 @@ function renderMemoryIndexTable(entries) {
 
 async function renderPreview() {
   const panel = document.getElementById('previewPanel');
+  if (healthViewOpen) {
+    document.getElementById('analyzeBtn')?.classList.add('active');
+    panel.innerHTML = '<div class="health-view"><div id="analysisSection"></div></div>';
+    if (lastAnalysisSt) rerenderAnalysis();
+    return;
+  }
   const source = stackData.find((s) => s.id === selectedFileId);
   if (!source) {
     panel.innerHTML =
@@ -722,6 +746,8 @@ async function renderPreview() {
   // File path lives inside the header as a muted line instead of its own band
   html += `<div class="preview-filepath" title="${esc(source.path)}">${esc(source.path)}</div>`;
   html += '</div>';
+
+  html += renderFileFindings(source);
 
   const hl = (text) => {
     const { text: processed, placeholders } = linkifyImports(text, source.id);
@@ -880,17 +906,63 @@ let analysisFindings = []; // findings of the rendered result, addressed by inde
 let analysisFilter = 'all';
 let analysisDismissed = new Set(); // session-only; keys are `${kind}|${title}`
 let analysisTs = null; // reset dismissals + filter when a new result lands
-let analysisRunIdx = 0; // which run from the per-project history is shown (0 = latest)
+let analysisRunIdx = -1; // shown run: -1 = merged current state (default), 0+ = single run
+let fixSelected = new Set(); // finding keys queued for the copyable fix plan
+let analysisFileFilter = null; // {id, name} from a memory-map cell click; narrows the findings list
+let treeHealth = new Map(); // source id -> {high, med, low} from the latest run
+let auditedIds = new Set(); // ids covered by the latest run (clean files get a hollow dot)
 
 // Session-only identity of a finding, used by dismiss/copy/render alike
 function findingKey(f) {
   return `${f.kind}|${f.title}`;
 }
 
-function resetAnalysisView(runIdx = 0) {
+function resetAnalysisView(runIdx = -1) {
   analysisRunIdx = runIdx;
   analysisFilter = 'all';
   analysisDismissed = new Set();
+  fixSelected = new Set();
+  analysisFileFilter = null;
+}
+
+// Findings name files by bare name while map cells carry display names (e.g.
+// skills), so matching goes through ids — the same resolution as findingFileIds.
+function _setFileFilter(id, name) {
+  analysisFileFilter = analysisFileFilter?.id === id ? null : { id, name };
+  rerenderAnalysis();
+}
+
+function findingMatchesFileFilter(f) {
+  if (!analysisFileFilter) return true;
+  return (f.files || []).some(
+    (n) => n === analysisFileFilter.name || findingFileIds(n).includes(analysisFileFilter.id),
+  );
+}
+
+// Health annotations on the tree always reflect the merged current state,
+// regardless of which historical run the health view is showing.
+function computeTreeHealth(st) {
+  treeHealth = new Map();
+  auditedIds = new Set();
+  const run = mergedRunView(st);
+  if (!run) return;
+  for (const s of runAuditedSources(run)) auditedIds.add(s.id);
+  for (const f of run.result?.findings || []) {
+    if (analysisDismissed.has(findingKey(f))) continue;
+    for (const name of f.files || []) {
+      for (const id of findingFileIds(name)) {
+        const cur = treeHealth.get(id) || { high: 0, med: 0, low: 0 };
+        cur[f.severity] = (cur[f.severity] || 0) + 1;
+        treeHealth.set(id, cur);
+      }
+    }
+  }
+}
+
+// Dismissals change what the tree badges should show — recompute and repaint.
+function syncTreeHealth() {
+  computeTreeHealth(lastAnalysisSt);
+  renderTree();
 }
 let scopePanelOpen = false;
 let scopeChecked = null; // Set of source ids; seeded with the default scope on first open
@@ -936,21 +1008,26 @@ async function _runAnalysis(force, ids) {
 }
 
 async function refreshAnalysis() {
-  const el = document.getElementById('analysisSection');
-  if (!el) return;
   let st;
   try {
     st = await fetchJSON('/api/memory/analysis');
   } catch {
     return;
   }
-  if (st.ts !== analysisTs) {
+  const isNew = st.ts !== analysisTs;
+  if (isNew) {
     analysisTs = st.ts;
     resetAnalysisView();
   }
   lastAnalysisSt = st;
-  el.innerHTML = renderAnalysis(st);
-  applyScopeIndeterminate(el);
+  computeTreeHealth(st);
+  renderTree();
+  if (isNew && !healthViewOpen && selectedFileId) renderPreview();
+  const el = document.getElementById('analysisSection');
+  if (el) {
+    el.innerHTML = renderAnalysis(st);
+    applyScopeIndeterminate(el);
+  }
   clearTimeout(analysisPollTimer);
   if (st.running) analysisPollTimer = setTimeout(refreshAnalysis, 2500);
 }
@@ -1137,12 +1214,15 @@ function _dismissFinding(btn, idx) {
   requestAnimationFrame(() => card.classList.add('leaving'));
   setTimeout(() => {
     analysisDismissed.add(findingKey(f));
+    fixSelected.delete(findingKey(f)); // a dismissed finding can't stay queued in the fix plan
+    syncTreeHealth();
     rerenderAnalysis();
   }, 280);
 }
 
 function _restoreDismissed() {
   analysisDismissed = new Set();
+  syncTreeHealth();
   rerenderAnalysis();
 }
 
@@ -1173,6 +1253,263 @@ function fileChipScope(source) {
   return source.scope === 'agent-memory' ? 'agent' : source.scope;
 }
 
+// Mirrors the server's analyzableSources: the user CLAUDE.md and rules are
+// reference-only context for the analyzer, never audited, even when their ids
+// ride along in the run's scope.
+function analyzableSource(s) {
+  return (
+    s.scope === 'memory' ||
+    s.scope === 'agent-memory' ||
+    ((s.scope === 'skill' || s.scope === 'project' || s.scope === 'local') && !s.parentId)
+  );
+}
+
+// Files covered by a run. Runs carry an `audited` snapshot taken at analysis
+// time — the authoritative list even after the stack changes. Older runs
+// predate the snapshot and fall back to re-deriving from the live stack.
+function runAuditedSources(run) {
+  if (!run) return [];
+  if (run.audited) return run.audited;
+  // Soft-linked (@import) children never go into the analysis, so keep them out
+  // of every health annotation even when their parent's id is in the run scope.
+  const own = stackData.filter((s) => !s.parentId && analyzableSource(s));
+  return run.ids ? own.filter((s) => run.ids.includes(s.id)) : own.filter((s) => s.scope === 'memory');
+}
+
+// Findings name files by bare name, which collides across scopes (user vs
+// project CLAUDE.md). Attribute to audit-eligible sources first; fall back to
+// any source with that name only when none are eligible — the agent may report
+// out-of-scope files it read recursively, and those still deserve a badge.
+function findingFileIds(name) {
+  // The agent sometimes reports a relative path instead of the display name
+  // (e.g. "dev-tools/bonya/.claude/skills/bonya/SKILL.md" for skill
+  // "dev-tools/bonya:bonya") — match those by path suffix. Only slash-bearing
+  // names qualify: a bare "SKILL.md" would suffix-match every skill.
+  const n = name.replace(/\\/g, '/');
+  const byPath = (s) => {
+    if (!n.includes('/')) return false;
+    const p = (s.path || '').replace(/\\/g, '/');
+    return p === n || p.endsWith(`/${n}`);
+  };
+  const matches = stackData.filter((s) => s.name === name || byPath(s));
+  const eligible = matches.filter((s) => !s.parentId && analyzableSource(s));
+  return (eligible.length ? eligible : matches).map((s) => s.id);
+}
+
+// The default health view merges runs: each file carries the verdict of the
+// newest run that audited it, so a narrow re-run (say, one skill) overlays the
+// wider picture instead of replacing it. Run chips still show single runs.
+function mergedRunView(st) {
+  const runs = st?.runs || [];
+  if (runs.length <= 1) return runs[0] || null;
+  const owner = new Map(); // file id -> newest run that audited it
+  const audited = [];
+  for (const run of runs) {
+    for (const s of runAuditedSources(run)) {
+      if (owner.has(s.id)) continue;
+      owner.set(s.id, run);
+      audited.push(s);
+    }
+  }
+  const findings = [];
+  const seen = new Set();
+  for (const run of runs) {
+    for (const f of run.result?.findings || []) {
+      if (seen.has(findingKey(f))) continue;
+      const ids = (f.files || []).flatMap(findingFileIds);
+      // A finding survives while its run still owns a file it touches — a newer
+      // run that re-audited the file supersedes the old verdict. File-less
+      // findings (suggested new memories) belong to the latest run only.
+      const owns = ids.length ? ids.some((id) => owner.get(id) === run) : run === runs[0];
+      if (!owns) continue;
+      seen.add(findingKey(f));
+      findings.push(f);
+    }
+  }
+  const latest = runs[0];
+  return {
+    ...latest,
+    audited,
+    // The latest run's summary describes only its own scope — misleading when
+    // merged, so it is dropped here.
+    result: { ...latest.result, findings, summary: null, scopeDesc: `${runs.length} runs merged` },
+  };
+}
+
+const SEV_WEIGHT = { high: 10, med: 3, low: 1 };
+
+// Start at 100, subtract per finding by severity. Blunt but explainable.
+function healthScore(findings) {
+  const penalty = findings.reduce((s, f) => s + (SEV_WEIGHT[f.severity] || 1), 0);
+  return Math.max(2, 100 - penalty);
+}
+
+function sevCounts(findings) {
+  const c = { high: 0, med: 0, low: 0 };
+  for (const f of findings) c[f.severity] = (c[f.severity] || 0) + 1;
+  return c;
+}
+
+function renderHealthDash(st, shown) {
+  // Score, tiles, and clean count track the live (non-dismissed) list they sit above.
+  const findings = (shown.result?.findings || []).filter((f) => !analysisDismissed.has(findingKey(f)));
+  const c = sevCounts(findings);
+  const audited = runAuditedSources(shown);
+  const dirty = new Set(findings.flatMap((f) => (f.files || []).flatMap(findingFileIds)));
+  const clean = audited.filter((s) => !dirty.has(s.id)).length;
+  const score = healthScore(findings);
+  const scoreColor = score >= 80 ? 'var(--success)' : score >= 50 ? 'var(--warning)' : 'var(--error)';
+  const CIRC = 163.4; // 2πr for r=26
+  let html = '<div class="hv-tiles">';
+  html += '<div class="hv-tile hv-ring-tile">';
+  html += `<div class="hv-ring"><svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-hover)" stroke-width="6"/><circle cx="32" cy="32" r="26" fill="none" stroke="${esc(scoreColor)}" stroke-width="6" stroke-linecap="round" transform="rotate(-90 32 32)" stroke-dasharray="${CIRC}" stroke-dashoffset="${esc((CIRC * (100 - score)) / 100)}"/></svg><span class="hv-ring-val" style="color:${scoreColor}">${score}</span></div>`;
+  html += `<div class="hv-tile-txt" title="Score = 100 − 10/high − 3/med − 1/low"><span class="hv-lbl">Health</span><span class="hv-sub">of 100</span></div></div>`;
+  for (const [sev, label] of [
+    ['high', 'High'],
+    ['med', 'Medium'],
+    ['low', 'Low'],
+  ]) {
+    html += `<div class="hv-tile"><span class="hv-lbl"><span class="dot sev-dot-${esc(sev)}"></span>${label}</span><span class="hv-num hv-num-${esc(sev)}">${c[sev]}</span></div>`;
+  }
+  html += `<div class="hv-tile"><span class="hv-lbl">Clean</span><span class="hv-num hv-num-clean">${clean}<i>/${audited.length}</i></span><span class="hv-sub">audited files</span></div>`;
+  html += renderTrend(st);
+  html += '</div>';
+  return html;
+}
+
+// Findings per run as stacked mini-columns, oldest to newest; click switches the shown run.
+function renderTrend(st) {
+  const runs = st.runs || [];
+  if (runs.length < 2) return '';
+  let html = '<div class="hv-tile hv-trend-tile"><span class="hv-lbl">Trend</span><div class="hv-trend">';
+  for (let i = runs.length - 1; i >= 0; i--) {
+    const c = sevCounts(runs[i].result?.findings || []);
+    const px = (n) => (n ? Math.max(3, n * 4) : 0);
+    html += `<div class="hv-trun${i === analysisRunIdx ? ' cur' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(analysisTimeAgo(runs[i].ts))} — ${c.high} high · ${c.med} med · ${c.low} low">`;
+    if (c.low) html += `<i class="tl" style="height:${px(c.low)}px"></i>`;
+    if (c.med) html += `<i class="tm" style="height:${px(c.med)}px"></i>`;
+    if (c.high) html += `<i class="th" style="height:${px(c.high)}px"></i>`;
+    if (!c.high && !c.med && !c.low) html += '<i class="tz"></i>';
+    html += '</div>';
+  }
+  html += '</div></div>';
+  return html;
+}
+
+// Every audited file sized by line count, colored by its worst finding.
+function renderMemoryMap(shown) {
+  const audited = runAuditedSources(shown);
+  if (!audited.length) return '';
+  const findings = (shown.result?.findings || []).filter((f) => !analysisDismissed.has(findingKey(f)));
+  const perFile = new Map();
+  for (const f of findings) {
+    for (const name of f.files || []) {
+      for (const id of findingFileIds(name)) {
+        const cur = perFile.get(id) || { high: 0, med: 0, low: 0 };
+        cur[f.severity]++;
+        perFile.set(id, cur);
+      }
+    }
+  }
+  const sevRank = { high: 0, med: 1, low: 2, clean: 3 };
+  const cellSev = (s) => {
+    const c = perFile.get(s.id);
+    return c ? (c.high ? 'high' : c.med ? 'med' : 'low') : 'clean';
+  };
+  let html = '<div class="hv-map-label">Memory map — colored by worst finding</div><div class="hv-map">';
+  for (const s of [...audited].sort(
+    (a, b) => sevRank[cellSev(a)] - sevRank[cellSev(b)] || a.name.localeCompare(b.name),
+  )) {
+    const c = perFile.get(s.id);
+    const sev = cellSev(s);
+    const n = c ? c.high + c.med + c.low : 0;
+    const title = `${s.name} — ${s.lines}L${n ? ` · ${n} finding${n > 1 ? 's' : ''} (worst: ${sev})` : ' · clean'}`;
+    html += `<div class="hv-cell hv-${esc(sev)}${analysisFileFilter?.id === s.id ? ' active' : ''}" onclick="_setFileFilter('${escAttrJs(s.id)}','${escAttrJs(s.name)}')" title="${esc(title)} — click to filter findings">`;
+    if (n) html += `<span class="hv-cell-n hv-cn-${esc(sev)}">${n}</span>`;
+    html += `<span class="hv-cell-name">${esc(s.name)}</span><span class="hv-cell-meta">${s.lines}L</span></div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+// Findings for one file from the merged current state, shown inline in the file preview.
+function renderFileFindings(source) {
+  const run = mergedRunView(lastAnalysisSt);
+  if (!run) return '';
+  const hits = (run.result?.findings || [])
+    .map((f, i) => [f, i])
+    .filter(
+      ([f]) =>
+        (f.files || []).some((n) => findingFileIds(n).includes(source.id)) && !analysisDismissed.has(findingKey(f)),
+    );
+  if (!hits.length) return '';
+  let html = `<div class="preview-findings"><div class="pf-label">Claude analysis — ${hits.length} finding${hits.length > 1 ? 's' : ''} for this file</div>`;
+  for (const [f, i] of hits) {
+    html += `<div class="analysis-card pf-card ${esc(`sev-${f.severity}`)}">`;
+    html += `<div class="analysis-card-head" onclick="this.parentElement.classList.toggle('expanded')">`;
+    html += `<span class="kind-badge ${esc(`kind-${f.kind}`)}">${esc(f.kind)}</span>`;
+    html += `<span class="analysis-card-title">${esc(f.title)}</span>`;
+    html += '<span class="card-actions">';
+    html += `<button class="card-btn" onclick="event.stopPropagation();_copyLatestFindingPrompt(${i})" title="Copy an agent-ready instruction for this finding">${COPY_ICON}Copy prompt</button>`;
+    html += `<button class="card-btn" onclick="event.stopPropagation();_dismissLatestFinding(this, ${i})" title="Drop this finding from the list">${DISMISS_ICON}Dismiss</button>`;
+    html += '</span></div>';
+    html += `<div class="analysis-card-detail">${esc(f.detail)}</div>`;
+    html += `<div class="analysis-card-suggestion">${esc(f.suggestion)}</div>`;
+    html += '</div>';
+  }
+  html += '</div>';
+  return html;
+}
+
+// Indexes into the merged current state — the same list renderFileFindings
+// draws from, unlike the health view, which can show a historical run.
+function _copyLatestFindingPrompt(i) {
+  const f = mergedRunView(lastAnalysisSt)?.result?.findings?.[i];
+  if (f) copyText(findingPrompt(f), 'Prompt copied — paste into any Claude Code session');
+}
+
+// Dismissals share the health view's session-only set, so a finding dropped
+// here disappears there too (and vice versa).
+function _dismissLatestFinding(btn, i) {
+  const f = mergedRunView(lastAnalysisSt)?.result?.findings?.[i];
+  if (!f) return;
+  const card = btn.closest('.analysis-card');
+  card.style.maxHeight = `${card.offsetHeight}px`;
+  requestAnimationFrame(() => card.classList.add('leaving'));
+  setTimeout(() => {
+    analysisDismissed.add(findingKey(f));
+    fixSelected.delete(findingKey(f));
+    syncTreeHealth();
+    renderPreview();
+  }, 280);
+}
+
+function _toggleFixSelect(idx) {
+  const f = analysisFindings[idx];
+  if (!f) return;
+  const key = findingKey(f);
+  if (fixSelected.has(key)) fixSelected.delete(key);
+  else fixSelected.add(key);
+  rerenderAnalysis();
+}
+
+function _copyFixPlan() {
+  const order = { high: 0, med: 1, low: 2 };
+  const picked = analysisFindings
+    .filter((f) => fixSelected.has(findingKey(f)))
+    .sort((a, b) => order[a.severity] - order[b.severity]);
+  if (!picked.length) return;
+  const plan = [
+    `Fix plan — ${picked.length} finding${picked.length > 1 ? 's' : ''} from a Claude Code memory audit, ordered by severity. Apply each in order.`,
+    '',
+    ...picked.map((f, i) => `## ${i + 1}. ${findingPrompt(f)}`),
+  ].join('\n\n');
+  copyText(
+    plan,
+    `Fix plan copied — ${picked.length} finding${picked.length > 1 ? 's' : ''}, paste into any Claude Code session`,
+  );
+}
+
 function renderAnalysisHead(st, r, ts) {
   const meta = [];
   if (ts) meta.push(analysisTimeAgo(ts));
@@ -1180,7 +1517,7 @@ function renderAnalysisHead(st, r, ts) {
   if (r?.durationMs != null) meta.push(`${Math.round(r.durationMs / 1000)}s`);
   if (r?.model) meta.push(r.model);
   if (r?.scopeDesc) meta.push(`scope: ${r.scopeDesc}`);
-  if (st.stale && analysisRunIdx === 0) meta.push('memory changed since');
+  if (st.stale && analysisRunIdx <= 0) meta.push('memory changed since');
   let html = '<div class="analysis-head">';
   html += '<span class="analysis-title">Claude analysis</span>';
   html += `<span class="analysis-meta">${esc(meta.join(' · '))}</span>`;
@@ -1194,7 +1531,8 @@ function renderAnalysisHead(st, r, ts) {
 }
 
 function _setAnalysisRun(i) {
-  resetAnalysisView(i);
+  resetAnalysisView(i); // clears dismissals, so the tree badges must be restored too
+  syncTreeHealth();
   rerenderAnalysis();
 }
 
@@ -1215,6 +1553,9 @@ function renderRunsStrip(st) {
   const runs = st.runs || [];
   if (!runs.length) return '';
   let html = '<div class="runs-strip"><span class="runs-label">runs</span>';
+  if (runs.length > 1) {
+    html += `<span class="run-chip${analysisRunIdx < 0 ? ' active' : ''}" onclick="_setAnalysisRun(-1)" title="Each file shows the newest run that audited it">current · ${runs.length} runs merged</span>`;
+  }
   runs.forEach((run, i) => {
     const r = run.result || {};
     const bits = [analysisTimeAgo(run.ts)];
@@ -1231,7 +1572,7 @@ function renderAnalysis(st) {
     return '<div class="analysis-box"><div class="analysis-status"><span class="analysis-spinner"></span>Analyzing memory with Claude Code — usually 30–90s…</div></div>';
   }
   const runs = st.runs || [];
-  const shown = runs[analysisRunIdx];
+  const shown = analysisRunIdx < 0 ? mergedRunView(st) : runs[analysisRunIdx];
   let html = '<div class="analysis-box">';
   html += renderAnalysisHead(st, shown?.result, shown?.ts);
   if (st.error) {
@@ -1245,7 +1586,9 @@ function renderAnalysis(st) {
   const r = shown.result;
   analysisFindings = r.findings || [];
   const byName = Object.fromEntries(stackData.map((s) => [s.name, s]));
+  html += renderHealthDash(st, shown);
   if (r.summary) html += `<div class="analysis-summary">${esc(r.summary)}</div>`;
+  html += renderMemoryMap(shown);
 
   const live = analysisFindings.filter((f) => !analysisDismissed.has(findingKey(f)));
   const count = (sev) => live.filter((f) => f.severity === sev).length;
@@ -1257,19 +1600,28 @@ function renderAnalysis(st) {
       if (sev !== 'all') html += '<span class="dot"></span>';
       html += `${sev} ${n}</button>`;
     }
+    if (analysisFileFilter) {
+      html += `<button class="sev-pill active file-filter-pill" onclick="_setFileFilter('${escAttrJs(analysisFileFilter.id)}','${escAttrJs(analysisFileFilter.name)}')" title="Clear the file filter">${esc(analysisFileFilter.name)} ×</button>`;
+    }
     if (analysisDismissed.size) {
       html += `<span class="dismissed-note">${analysisDismissed.size} dismissed · <a onclick="_restoreDismissed()">restore</a></span>`;
+    }
+    if (fixSelected.size) {
+      html += `<button class="card-btn fix-plan-btn" onclick="_copyFixPlan()" title="Copy the selected findings as one ordered fix prompt">${COPY_ICON}Copy fix plan (${fixSelected.size})</button>`;
     }
     html += '</div>';
   }
 
-  const visible = live.filter((f) => analysisFilter === 'all' || f.severity === analysisFilter);
+  const visible = live.filter(
+    (f) => (analysisFilter === 'all' || f.severity === analysisFilter) && findingMatchesFileFilter(f),
+  );
   if (!analysisFindings.length) html += '<div class="analysis-empty">No issues found.</div>';
   else if (!visible.length) html += '<div class="analysis-empty">Nothing here — filtered out or dismissed.</div>';
   for (const f of visible) {
     const idx = analysisFindings.indexOf(f);
     html += `<div class="analysis-card ${esc(`sev-${f.severity}`)}">`;
     html += '<div class="analysis-card-head">';
+    html += `<input type="checkbox" class="fix-check" ${fixSelected.has(findingKey(f)) ? 'checked ' : ''}onclick="_toggleFixSelect(${idx})" title="Queue for the fix plan">`;
     html += `<span class="kind-badge ${esc(`kind-${f.kind}`)}">${esc(f.kind)}</span>`;
     html += `<span class="analysis-card-title">${esc(f.title)}</span>`;
     html += '<span class="card-actions">';
@@ -1280,10 +1632,12 @@ function renderAnalysis(st) {
     html += '<div class="analysis-card-files">';
     if (!files.length) html += '<span class="no-files">no file — new memory suggested</span>';
     for (const fn of files) {
-      const child = byName[fn];
+      // Same name-or-path resolution as the map and tree badges — a chip must
+      // stay clickable when the agent reported a path instead of the name.
+      const child = byName[fn] || stackData.find((s) => findingFileIds(fn).includes(s.id));
       const scopeTag = fileChipScope(child);
       if (child) {
-        html += `<a class="file-chip" href="#" onclick="closeModal('analysisModal');selectFile('${escAttrJs(child.id)}');return false" title="${esc(child.path)}">${FILE_ICON}${esc(fn)}<span class="fscope fscope-${esc(scopeTag)}">${esc(scopeTag)}</span></a>`;
+        html += `<a class="file-chip" href="#" onclick="selectFile('${escAttrJs(child.id)}');return false" title="${esc(child.path)}">${FILE_ICON}${esc(fn)}<span class="fscope fscope-${esc(scopeTag)}">${esc(scopeTag)}</span></a>`;
       } else {
         html += `<span class="file-chip">${FILE_ICON}${esc(fn)}</span>`;
       }
@@ -1301,8 +1655,42 @@ function renderAnalysis(st) {
 
 // #region RENDER_BUDGET
 
+let footprintHighlight = false;
+let footprintScope = null; // null = whole footprint; a scope name = just that segment's files
+let footprintIds = new Set(); // source ids the server counted into the footprint
+
+// Clicking the top bar highlights all footprint files; clicking a segment narrows
+// the highlight to that segment's scope (the skill segment = skill descriptions).
+function _toggleFootprint(scope = null, ev) {
+  if (ev) ev.stopPropagation();
+  if (footprintHighlight && footprintScope === scope) {
+    footprintHighlight = false;
+    footprintScope = null;
+  } else {
+    footprintHighlight = true;
+    footprintScope = scope;
+  }
+  document.body.classList.toggle('fp-mode', footprintHighlight);
+  applySegmentState();
+  renderTree();
+}
+
+function footprintHit(item) {
+  if (footprintScope === 'skill') return item.scope === 'skill' && !item.parentId;
+  if (footprintScope) return footprintIds.has(item.id) && item.scope === footprintScope;
+  return footprintIds.has(item.id);
+}
+
+function applySegmentState() {
+  const scoped = footprintHighlight && footprintScope !== null;
+  for (const el of document.querySelectorAll('.budget-segment')) {
+    el.classList.toggle('seg-dim', scoped && el.dataset.scope !== footprintScope);
+  }
+}
+
 function renderBudget() {
   if (!summaryData) return;
+  footprintIds = new Set(summaryData.ids || []);
 
   // Summary stat cards
   document.getElementById('statFiles').textContent = summaryData.totalFiles;
@@ -1325,13 +1713,14 @@ function renderBudget() {
     const chars = scopeTotals[scope];
     if (!chars) continue;
     const pct = (chars / totalChars) * 100;
-    html += `<div class="budget-segment" style="width:${pct}%;background:var(--scope-${scope})" title="${SCOPE_LABELS[scope] || scope}: ${chars.toLocaleString()} chars (${pct.toFixed(1)}%)"></div>`;
+    html += `<div class="budget-segment" data-scope="${esc(scope)}" onclick="_toggleFootprint('${escAttrJs(scope)}', event)" style="width:${pct}%;background:var(--scope-${scope})" title="${SCOPE_LABELS[scope] || scope}: ${chars.toLocaleString()} chars (${pct.toFixed(1)}%) — click to highlight"></div>`;
   }
   if (skillDescChars) {
     const pct = (skillDescChars / totalChars) * 100;
-    html += `<div class="budget-segment" style="width:${pct}%;background:var(--scope-skill)" title="Skill descriptions (${esc(summaryData.skillDesc.count)} enabled): ${skillDescChars.toLocaleString()} chars (${pct.toFixed(1)}%)"></div>`;
+    html += `<div class="budget-segment" data-scope="skill" onclick="_toggleFootprint('skill', event)" style="width:${pct}%;background:var(--scope-skill)" title="Skill descriptions (${esc(summaryData.skillDesc.count)} enabled): ${skillDescChars.toLocaleString()} chars (${pct.toFixed(1)}%) — click to highlight"></div>`;
   }
   segContainer.innerHTML = html;
+  applySegmentState();
 }
 
 // #endregion RENDER_BUDGET
@@ -1342,18 +1731,17 @@ async function loadData() {
   try {
     [stackData, summaryData] = await Promise.all([fetchJSON('/api/stack'), fetchJSON('/api/summary')]);
     invalidateTreeIndex();
+    renderBudget(); // refreshes footprintIds, which renderTree's highlight reads
     renderTree();
-    renderBudget();
-    if (!selectedFileId) {
+    refreshAnalysis(); // health dots on the tree come from the latest run
+    if (!selectedFileId && !healthViewOpen) {
       const proj = stackData.find((s) => s.scope === 'project' && s.name === 'CLAUDE.md');
       const user = stackData.find((s) => s.scope === 'user' && s.name === 'CLAUDE.md');
       const auto = proj || user;
       if (auto) selectedFileId = auto.id;
     }
-    if (selectedFileId) {
-      renderTree();
-      renderPreview();
-    }
+    if (selectedFileId) renderTree();
+    renderPreview();
   } catch (err) {
     showToast(`Failed to load: ${err.message}`, 'error');
   }
@@ -1394,6 +1782,11 @@ document.addEventListener('keydown', (e) => {
       modal.classList.remove('open');
       e.preventDefault();
     }
+    return;
+  }
+  if (e.key === 'Escape' && healthViewOpen) {
+    e.preventDefault();
+    openHealthView();
     return;
   }
   if (e.key === 't') toggleTheme();

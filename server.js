@@ -598,7 +598,7 @@ function stripContent(source) {
 const app = express();
 
 // Mounted before express.json() so a rejected request never buffers a body.
-const net = createNetGuard({ appName: 'Claude Code Memory' });
+const net = createNetGuard({ appName: 'Memory Diagnoser' });
 app.use(net.hostGuard);
 app.use(net.frameGuard);
 app.use(net.originGuard);
@@ -608,7 +608,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/hub-config', (_req, res) => {
   res.json({
-    name: 'Claude Code Memory',
+    name: 'Memory Diagnoser',
     icon: 'brain',
     description: 'Explore Claude Code memory sources',
     enabled: !!process.env.CLAUDE_HUB,
@@ -1080,7 +1080,10 @@ app.post('/api/memory/analyze', (req, res) => {
     // Another instance may have added runs while this one was in flight — merge by ts.
     const diskRuns = readAnalysisStore()[project]?.runs || [];
     const baseRuns = [...new Map([...prevRuns, ...diskRuns].map((run) => [run.ts, run])).values()].sort((a, b) => b.ts - a.ts);
-    const runs = (result ? [{ result, ts, hash, ids: stateIds }, ...baseRuns] : baseRuns).slice(0, MAX_ANALYSIS_RUNS);
+    // Snapshot the audited files into the run — the stack changes over time, so
+    // historical runs must not re-derive their scope from the live stack.
+    const audited = selected.map((s) => ({ id: s.id, name: s.name, scope: s.scope, lines: s.lines }));
+    const runs = (result ? [{ result, ts, hash, ids: stateIds, audited }, ...baseRuns] : baseRuns).slice(0, MAX_ANALYSIS_RUNS);
     analysisStates.set(project, {
       running: false,
       result,
@@ -1121,7 +1124,17 @@ app.get('/api/summary', (_req, res) => {
   const stack = getStack();
   // Memory topic files load on demand like skill bodies — only the startup MEMORY.md
   // index is standing cost, so ondemand memory-scope files stay out of the footprint.
-  const sources = stack.filter(s => s.scope !== 'skill' && s.load !== 'link'
+  // Nested CLAUDE.md files (load:'tree') load progressively when Claude works in their
+  // directory, so they and their import chains are not standing cost either.
+  const treeIds = new Set(stack.filter(s => s.load === 'tree').map(s => s.id));
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const s of stack) {
+      if (s.parentId && treeIds.has(s.parentId) && !treeIds.has(s.id)) { treeIds.add(s.id); grew = true; }
+    }
+  }
+  const sources = stack.filter(s => s.scope !== 'skill' && s.load !== 'link' && !treeIds.has(s.id)
     && !((s.scope === 'memory' || s.scope === 'agent-memory') && s.load === 'ondemand'));
   const totalFiles = sources.length;
   const totalLines = sources.reduce((s, f) => s + (f.lines || 0), 0);
@@ -1135,7 +1148,8 @@ app.get('/api/summary', (_req, res) => {
   const scopeChars = {};
   for (const f of sources) scopeChars[f.scope] = (scopeChars[f.scope] || 0) + (f.chars || 0);
   const totalChars = sources.reduce((s, f) => s + (f.chars || 0), 0) + skillDesc.chars;
-  res.json({ totalFiles, totalLines, totalBytes, totalChars, scopeChars, skillDesc, alwaysLoaded, conditional, onDemand });
+  // ids: which sources make up the footprint, so the client can highlight them
+  res.json({ totalFiles, totalLines, totalBytes, totalChars, scopeChars, skillDesc, alwaysLoaded, conditional, onDemand, ids: sources.map(s => s.id) });
 });
 
 app.get('/api/stack', (_req, res) => {
@@ -1207,7 +1221,7 @@ app.get('/api/imports', (req, res) => {
 // #region STARTUP
 
 const onReady = (port) => {
-  console.log(`Claude Code Memory running at http://localhost:${port}`);
+  console.log(`Memory Diagnoser running at http://localhost:${port}`);
   console.log(`Project: ${currentProjectPath}`);
   const warning = net.exposureWarning();
   if (warning) console.log(warning);

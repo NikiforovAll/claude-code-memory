@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Claude Code Memory</title>
+<title>Memory Diagnoser</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Playfair+Display:wght@400;500;600&display=swap" rel="stylesheet">
@@ -25,14 +25,14 @@
   <div class="topbar">
     <div class="topbar-logo">
       <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"/><path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"/></svg></div>
-      <span class="logo-text">Memory</span>
+      <span class="logo-text">Memory Diagnoser</span>
     </div>
     <div class="spacer"></div>
     <div class="topbar-project" id="projectBtn" onclick="changeProject()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
       <span id="projectName">Loading...</span>
     </div>
-    <button class="topbar-btn" id="analyzeBtn" title="Analyze memory with Claude" onclick="openAnalysisModal()">
+    <button class="topbar-btn" id="analyzeBtn" title="Memory health — Claude analysis" onclick="openHealthView()">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.7L19.6 10l-5.7 1.9L12 17.6l-1.9-5.7L4.4 10l5.7-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
       <span>Analyze</span>
     </button>
@@ -56,7 +56,7 @@
   </div>
 
   <!-- Size bar -->
-  <div class="budget-bar" id="budgetBar">
+  <div class="budget-bar" id="budgetBar" onclick="_toggleFootprint()" title="Click to highlight the files that count toward the memory footprint">
     <div class="budget-label">
       <span>Memory sources</span>
       <span class="mono" id="budgetText">0 chars</span>
@@ -150,24 +150,11 @@
     </div>
   </div>
 
-  <!-- Analysis modal -->
-  <div class="modal-overlay" id="analysisModal" onclick="if(event.target===this)closeModal('analysisModal')">
-    <div class="modal modal-wide">
-      <div class="modal-header">
-        <h3>Claude analysis</h3>
-        <button class="modal-close" onclick="closeModal('analysisModal')">&#10005;</button>
-      </div>
-      <div class="modal-body">
-        <div id="analysisSection"></div>
-      </div>
-    </div>
-  </div>
-
   <!-- Help modal -->
   <div class="modal-overlay" id="helpModal" onclick="if(event.target===this)toggleHelpModal()">
     <div class="modal">
       <div class="modal-header">
-        <h3>Memory Explorer</h3>
+        <h3>Memory Diagnoser</h3>
         <button class="modal-close" onclick="toggleHelpModal()">&#10005;</button>
       </div>
       <div class="modal-body">
