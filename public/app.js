@@ -1216,9 +1216,25 @@ function memoryDirPath() {
   return idx ? idx.path.replace(/[\\/][^\\/]+$/, '') : null;
 }
 
+// Resolve a finding's bare file names to the live stack sources they name, so a
+// prompt can cite real paths instead of guessing a location from `scope`.
+function findingSources(f) {
+  const ids = new Set();
+  for (const name of f.files || []) {
+    for (const id of findingFileIds(name, f.scope)) ids.add(id);
+  }
+  return [...ids].map((id) => stackData.find((s) => s.id === id)).filter((s) => s?.path);
+}
+
 function findingPrompt(f) {
+  const sources = findingSources(f);
+  const paths = sources.map((s) => s.path);
   let header;
-  if (f.scope === 'user') {
+  if (paths.length === 1) {
+    header = `In the Claude Code instruction file at ${paths[0]}, apply this fix:`;
+  } else if (paths.length > 1) {
+    header = 'In the Claude Code instruction files listed below, apply this fix:';
+  } else if (f.scope === 'user') {
     const path = stackData.find((s) => s.id === 'user-claude-md')?.path || '~/.claude/CLAUDE.md';
     header = `In the user-level Claude Code instructions at ${path}, apply this fix:`;
   } else {
@@ -1228,8 +1244,12 @@ function findingPrompt(f) {
       : "In this project's Claude Code auto-memory, apply this fix:";
   }
   const lines = [header, '', `Finding (${f.kind}, ${f.severity}): ${f.title}`, f.detail, '', `Action: ${f.suggestion}`];
-  if ((f.files || []).length) lines.push(`Files: ${f.files.join(', ')}`);
-  if (f.scope !== 'user') lines.push('', 'Update MEMORY.md index lines if files are added, renamed, or removed.');
+  const cited = paths.length ? paths : f.files || [];
+  if (cited.length) lines.push(`Files: ${cited.join(', ')}`);
+  // The index note only applies to auto-memory files; a CLAUDE.md or SKILL.md
+  // fix has no MEMORY.md to keep in sync.
+  const touchesMemory = paths.length ? sources.some((s) => s.scope === 'memory') : f.scope !== 'user';
+  if (touchesMemory) lines.push('', 'Update MEMORY.md index lines if files are added, renamed, or removed.');
   return lines.join('\n');
 }
 

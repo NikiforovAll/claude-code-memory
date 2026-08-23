@@ -940,6 +940,7 @@ const REVIEWER_COMMON = [
   'You review exactly one file that shapes Claude Code behavior; the parent passes its name and full content.',
   'Verify before judging: for every claim that references the repository in your working directory — a file, directory, command, script, flag, or path — check whether it still holds with your read-only tools. For tools the file expects on the machine, check existence with `command -v` / `which` / `where` (the only Bash commands you may run). Never call something "likely stale" when you can check it.',
   'Also judge whether the content is still needed at all: if the thing it guards against is gone (the tool was removed, the convention is enforced elsewhere, the referenced file no longer exists), say so explicitly.',
+  'A check you could not run is not evidence of absence. If a probe is denied by permissions or errors out, report that claim as UNCHECKED and say why — never turn a failed check into a stale or invalidate finding.',
 ];
 
 // The user reviewer swaps repo verification for machine verification — the working
@@ -948,6 +949,7 @@ const REVIEWER_COMMON_USER = [
   'You review the user-level (global) CLAUDE.md that loads in every session of every project; the parent passes its name and full content.',
   'Verify before judging, against the machine only: check tools the file names with `command -v` / `which` / `where` (the only Bash commands you may run), and check files, skills, or agents it references under ~/.claude with your read tools. NEVER read or judge against the repository in your working directory — it is one arbitrary project and proves nothing about a global rule.',
   'Also judge whether the content is still needed at all: if the tool it references is gone from the machine or the file it points to no longer exists, say so explicitly.',
+  'A check you could not run is not evidence of absence. If a probe is denied by permissions or errors out, report that claim as UNCHECKED and say why — never turn a failed check into a stale or invalidate finding.',
 ];
 
 const REVIEWER_REPORT = [
@@ -1017,7 +1019,15 @@ function runClaudeAnalysis(prompt, model, cwd) {
       try {
         const envelope = JSON.parse(out);
         if (envelope.is_error) return finish({ ok: false, error: String(envelope.result || 'Claude Code reported an error') });
-        finish({ ok: true, data: envelope.structured_output, costUsd: envelope.total_cost_usd, durationMs: envelope.duration_ms });
+        // A run can exit clean without structured_output (schema retries exhausted,
+        // truncated stdout). Spreading that absence downstream yields an empty
+        // findings list, which the UI cannot tell apart from a genuine all-clear —
+        // so treat a missing payload as a failure rather than as "no problems".
+        const data = envelope.structured_output;
+        if (!data || !Array.isArray(data.findings)) {
+          return finish({ ok: false, error: 'Claude Code returned no structured output — the audit did not complete, so no result is being shown.' });
+        }
+        finish({ ok: true, data, costUsd: envelope.total_cost_usd, durationMs: envelope.duration_ms });
       } catch {
         finish({ ok: false, error: `Claude Code returned an invalid JSON envelope${err ? `: ${err.slice(0, 300)}` : ''}` });
       }
