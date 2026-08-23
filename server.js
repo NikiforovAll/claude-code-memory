@@ -729,60 +729,53 @@ const ANALYSIS_SCHEMA = {
 // Generous: the run fans out one verification subagent per audited file.
 const ANALYZE_TIMEOUT_MS = 600_000;
 
-// Analysis results keyed by project path — switching projects keeps each project's
-// last result. Completed runs are persisted to disk so they survive server restarts.
-const ANALYSIS_STORE = path.join(CLAUDE_DIR, 'claude-code-memory-analysis.json');
-const analysisStates = new Map();
+// Analysis state lives in one file per project under ~/.claude/memory-analysis/,
+// named by the same path encoding Claude Code uses for its projects dir. Disk is the
+// single source of truth — in-flight runs are persisted as `pending` entries so they
+// survive page reloads and are visible to other server instances (hub + standalone).
+const ANALYSIS_DIR = path.join(CLAUDE_DIR, 'memory-analysis');
 
-const EMPTY_ANALYSIS = { running: false, result: null, error: null, hash: null, ts: null, ids: null, runs: [] };
+const EMPTY_ANALYSIS = { pending: [], result: null, error: null, hash: null, ts: null, ids: null, runs: [], dismissed: [] };
 const MAX_ANALYSIS_RUNS = 10;
 
-function hydrateAnalysisEntry(st) {
-  const loaded = { ...EMPTY_ANALYSIS, ...st, running: false };
-  // Migrate pre-runs entries: the stored latest result becomes the first history run.
-  if (loaded.result && !(loaded.runs || []).length)
-    loaded.runs = [{ result: loaded.result, ts: loaded.ts, hash: loaded.hash, ids: loaded.ids }];
-  return loaded;
+function analysisFile(project) {
+  return path.join(ANALYSIS_DIR, `${encodeProjectPath(project)}.json`);
 }
 
-let analysisStoreCache = null; // { mtimeMs, data } — reparse only when the shared file changes
-function readAnalysisStore() {
-  try {
-    const { mtimeMs } = fs.statSync(ANALYSIS_STORE);
-    if (analysisStoreCache?.mtimeMs !== mtimeMs) {
-      analysisStoreCache = { mtimeMs, data: JSON.parse(fs.readFileSync(ANALYSIS_STORE, 'utf-8')) };
-    }
-    return analysisStoreCache.data;
-  } catch {
-    return {}; // no store yet, or unreadable
-  }
+// A pending entry whose server died mid-run would otherwise show as running forever.
+function prunePending(pending) {
+  const cutoff = Date.now() - ANALYZE_TIMEOUT_MS;
+  return (pending || []).filter((p) => p.startedAt > cutoff);
 }
 
-// The store file is shared between server instances (hub + standalone), so disk is
-// the source of truth whenever this instance has no run in flight for the project.
 function getAnalysisState(project) {
-  const cur = analysisStates.get(project);
-  if (cur?.running) return cur;
-  const st = readAnalysisStore()[project];
-  if (!st) {
-    analysisStates.delete(project);
-    return EMPTY_ANALYSIS;
+  let st = null;
+  try {
+    st = JSON.parse(fs.readFileSync(analysisFile(project), 'utf-8'));
+  } catch {
+    return { ...EMPTY_ANALYSIS };
   }
-  const loaded = hydrateAnalysisEntry(st);
-  analysisStates.set(project, loaded);
+  const loaded = { ...EMPTY_ANALYSIS, ...st };
+  loaded.pending = prunePending(loaded.pending);
+  // result/ts/hash/ids are a projection of the newest run — derived here so no
+  // writer can persist them out of sync with the runs history.
+  const latest = (loaded.runs || [])[0];
+  loaded.result = latest?.result || null;
+  loaded.ts = latest?.ts || null;
+  loaded.hash = latest?.hash || null;
+  loaded.ids = latest ? latest.ids : null;
   return loaded;
 }
 
-// Write only this project's entry, merged over what is on disk — a blind full
-// rewrite would clobber runs another instance saved since we last read.
-function saveAnalysisState(project) {
-  const disk = readAnalysisStore();
-  const st = analysisStates.get(project);
-  if (st && (st.result || st.error || (st.runs || []).length))
-    disk[project] = { result: st.result, error: st.error, hash: st.hash, ts: st.ts, ids: st.ids, runs: st.runs || [] };
-  else delete disk[project];
+function saveAnalysisState(project, st) {
+  const { pending = [], error = null, runs = [], dismissed = [] } = st;
   try {
-    fs.writeFileSync(ANALYSIS_STORE, JSON.stringify(disk), 'utf-8');
+    if (!pending.length && !error && !runs.length && !dismissed.length) {
+      fs.rmSync(analysisFile(project), { force: true });
+      return;
+    }
+    fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
+    fs.writeFileSync(analysisFile(project), JSON.stringify({ pending, error, runs, dismissed }), 'utf-8');
   } catch { /* best-effort persistence */ }
 }
 
@@ -1010,55 +1003,60 @@ function scopeDescription(selected) {
 
 app.get('/api/memory/analysis', (_req, res) => {
   const st = getAnalysisState(currentProjectPath);
+  const running = st.pending.length > 0;
   // Staleness needs a full stack scan + content hash — skip it while a run is in
   // flight (the client polls every 2.5s and stale is meaningless mid-run anyway).
   let stale = false;
-  if (!st.running && st.result) {
+  if (!running && st.result) {
     const selected = selectAnalysisSources(getStack(), st.ids);
     const hash = selected.length ? memoryContentHash(selected) : null;
     stale = st.hash !== hash;
   }
   res.json({
-    running: st.running,
+    pending: st.pending,
     result: st.result,
     error: st.error,
     ts: st.ts,
     stale,
     project: currentProjectPath,
     runs: st.runs || [],
+    dismissed: st.dismissed || [],
   });
 });
 
 app.post('/api/memory/analysis/delete-run', (req, res) => {
   const st = getAnalysisState(currentProjectPath);
-  if (st.running) return res.status(409).json({ error: 'analysis running' });
   const ts = req.body?.ts;
   const runs = (st.runs || []).filter((run) => run.ts !== ts);
   if (runs.length === (st.runs || []).length) return res.status(404).json({ error: 'run not found' });
-  const latest = runs[0] || null;
-  analysisStates.set(currentProjectPath, {
-    ...st,
-    result: latest?.result || null,
-    ts: latest?.ts || null,
-    hash: latest?.hash || null,
-    ids: latest ? latest.ids : null,
-    error: null,
-    runs,
-  });
-  saveAnalysisState(currentProjectPath);
+  saveAnalysisState(currentProjectPath, { ...st, error: null, runs });
   res.json({ ok: true, runs: runs.length });
+});
+
+// Dismissals persist per project so they survive reloads and re-runs.
+// Body: {key} adds, {all:true} clears.
+app.post('/api/memory/analysis/dismiss', (req, res) => {
+  const st = getAnalysisState(currentProjectPath);
+  const set = new Set(st.dismissed || []);
+  if (req.body?.all) set.clear();
+  else {
+    const key = req.body?.key;
+    if (typeof key !== 'string' || !key) return res.status(400).json({ error: 'key required' });
+    set.add(key);
+  }
+  saveAnalysisState(currentProjectPath, { ...st, dismissed: [...set] });
+  res.json({ ok: true, dismissed: [...set] });
 });
 
 app.post('/api/memory/analyze', (req, res) => {
   const prev = getAnalysisState(currentProjectPath);
-  if (prev.running) return res.status(409).json({ error: 'analysis already running' });
   const stack = getStack();
   const ids = req.body?.ids;
   const selected = selectAnalysisSources(stack, ids);
   if (!selected.length) return res.status(404).json({ error: 'nothing to analyze for this scope' });
   const hash = memoryContentHash(selected);
   if (!req.body?.force && prev.result && prev.hash === hash) {
-    return res.json({ running: false, cached: true });
+    return res.json({ cached: true });
   }
   const memSources = selected.filter((s) => s.scope === 'memory');
   const skills = selected.filter((s) => s.scope === 'skill');
@@ -1072,30 +1070,30 @@ app.post('/api/memory/analyze', (req, res) => {
   // Capture the project now — the user may switch projects while the run is in flight,
   // and the result must land under the project it was computed for.
   const project = currentProjectPath;
-  const prevRuns = prev.runs || [];
-  analysisStates.set(project, { running: true, result: null, error: null, hash, ts: null, ids: stateIds, runs: prevRuns });
+  const runId = crypto.randomUUID();
+  saveAnalysisState(project, {
+    ...prev,
+    pending: [...prev.pending, { id: runId, startedAt: Date.now(), model, scopeDesc: scopeDescription(selected) }],
+  });
   runClaudeAnalysis(prompt, model, project).then((r) => {
     const ts = Date.now();
     const result = r.ok ? { ...r.data, costUsd: r.costUsd, durationMs: r.durationMs, scopeDesc: scopeDescription(selected), model } : null;
-    // Another instance may have added runs while this one was in flight — merge by ts.
-    const diskRuns = readAnalysisStore()[project]?.runs || [];
-    const baseRuns = [...new Map([...prevRuns, ...diskRuns].map((run) => [run.ts, run])).values()].sort((a, b) => b.ts - a.ts);
+    // Re-read from disk — parallel runs or another instance may have finished meanwhile.
+    const cur = getAnalysisState(project);
     // Snapshot the audited files into the run — the stack changes over time, so
     // historical runs must not re-derive their scope from the live stack.
     const audited = selected.map((s) => ({ id: s.id, name: s.name, scope: s.scope, lines: s.lines }));
-    const runs = (result ? [{ result, ts, hash, ids: stateIds, audited }, ...baseRuns] : baseRuns).slice(0, MAX_ANALYSIS_RUNS);
-    analysisStates.set(project, {
-      running: false,
-      result,
+    const runs = (result ? [{ result, ts, hash, ids: stateIds, audited }, ...(cur.runs || [])] : cur.runs || [])
+      .sort((a, b) => b.ts - a.ts)
+      .slice(0, MAX_ANALYSIS_RUNS);
+    saveAnalysisState(project, {
+      ...cur,
+      pending: cur.pending.filter((p) => p.id !== runId),
       error: r.ok ? null : r.error,
-      hash,
-      ts,
-      ids: stateIds,
       runs,
     });
-    saveAnalysisState(project);
   });
-  res.status(202).json({ running: true });
+  res.status(202).json({ ok: true });
 });
 
 // #endregion ANALYZER

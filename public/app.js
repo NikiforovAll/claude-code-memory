@@ -904,15 +904,17 @@ let analysisPollTimer = null;
 let lastAnalysisSt = null;
 let analysisFindings = []; // findings of the rendered result, addressed by index from handlers
 let analysisFilter = 'all';
-let analysisDismissed = new Set(); // session-only; keys are `${kind}|${title}`
-let analysisTs = null; // reset dismissals + filter when a new result lands
+let analysisDismissed = new Set(); // server-persisted per project; keys are `${kind}|${title}`
+let dismissWrites = 0; // dismiss POSTs in flight — polls must not clobber the local set meanwhile
+let lastPollKey = null; // fingerprint of the last rendered analysis state
+let analysisTs = null; // reset filters when a new result lands
 let analysisRunIdx = -1; // shown run: -1 = merged current state (default), 0+ = single run
 let fixSelected = new Set(); // finding keys queued for the copyable fix plan
 let analysisFileFilter = null; // {id, name} from a memory-map cell click; narrows the findings list
 let treeHealth = new Map(); // source id -> {high, med, low} from the latest run
 let auditedIds = new Set(); // ids covered by the latest run (clean files get a hollow dot)
 
-// Session-only identity of a finding, used by dismiss/copy/render alike
+// Identity of a finding, used by dismiss/copy/render alike
 function findingKey(f) {
   return `${f.kind}|${f.title}`;
 }
@@ -920,7 +922,6 @@ function findingKey(f) {
 function resetAnalysisView(runIdx = -1) {
   analysisRunIdx = runIdx;
   analysisFilter = 'all';
-  analysisDismissed = new Set();
   fixSelected = new Set();
   analysisFileFilter = null;
 }
@@ -990,7 +991,7 @@ async function _runAnalysis(force, ids) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok && res.status !== 409) {
+    if (!res.ok) {
       const msg = await res
         .json()
         .then((e) => e.error)
@@ -1019,17 +1020,29 @@ async function refreshAnalysis() {
     analysisTs = st.ts;
     resetAnalysisView();
   }
+  // A dismiss POST in flight owns the set — adopting the server's (older) copy here
+  // would briefly resurrect the finding the user just dismissed.
+  if (!dismissWrites) analysisDismissed = new Set(st.dismissed || []);
   lastAnalysisSt = st;
-  computeTreeHealth(st);
-  renderTree();
-  if (isNew && !healthViewOpen && selectedFileId) renderPreview();
-  const el = document.getElementById('analysisSection');
-  if (el) {
-    el.innerHTML = renderAnalysis(st);
-    applyScopeIndeterminate(el);
+  // Polls where only the banner clock changed must not rebuild the review DOM —
+  // that would tear down the cards mid-interaction every 2.5s while a run is in flight.
+  const pollKey = JSON.stringify([st.ts, st.error, [...analysisDismissed], (st.pending || []).map((p) => p.id)]);
+  const banner = document.getElementById('runningBanner');
+  if (pollKey === lastPollKey && banner) {
+    banner.innerHTML = renderRunningBanner(st);
+  } else {
+    computeTreeHealth(st);
+    renderTree();
+    if (isNew && !healthViewOpen && selectedFileId) renderPreview();
+    const el = document.getElementById('analysisSection');
+    if (el) {
+      el.innerHTML = renderAnalysis(st);
+      applyScopeIndeterminate(el);
+    }
   }
+  lastPollKey = pollKey;
   clearTimeout(analysisPollTimer);
-  if (st.running) analysisPollTimer = setTimeout(refreshAnalysis, 2500);
+  if ((st.pending || []).length) analysisPollTimer = setTimeout(refreshAnalysis, 2500);
 }
 
 // Re-render from the cached state — used by scope/filter/dismiss handlers so a
@@ -1206,22 +1219,46 @@ function _copyAllFindings() {
   copyText(live.map(findingPrompt).join('\n\n---\n\n'), `${live.length} prompts copied`);
 }
 
-function _dismissFinding(btn, idx) {
-  const f = analysisFindings[idx];
-  if (!f) return;
+// The local set already changed, so the UI never waits; the response's authoritative
+// list is adopted once no other write is racing it.
+function persistDismissed(body) {
+  dismissWrites++;
+  fetch('/api/memory/analysis/dismiss', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+    .then((r) => r.json())
+    .then((d) => {
+      if (dismissWrites === 1 && Array.isArray(d.dismissed)) analysisDismissed = new Set(d.dismissed);
+    })
+    .catch(() => {})
+    .finally(() => dismissWrites--);
+}
+
+// Shared by the health view and the file-preview cards — collapse the card,
+// persist the dismissal, then repaint whichever surface hosted it.
+function dismissFinding(btn, f, repaint) {
   const card = btn.closest('.analysis-card');
   card.style.maxHeight = `${card.offsetHeight}px`;
   requestAnimationFrame(() => card.classList.add('leaving'));
   setTimeout(() => {
     analysisDismissed.add(findingKey(f));
+    persistDismissed({ key: findingKey(f) });
     fixSelected.delete(findingKey(f)); // a dismissed finding can't stay queued in the fix plan
     syncTreeHealth();
-    rerenderAnalysis();
+    repaint();
   }, 280);
+}
+
+function _dismissFinding(btn, idx) {
+  const f = analysisFindings[idx];
+  if (f) dismissFinding(btn, f, rerenderAnalysis);
 }
 
 function _restoreDismissed() {
   analysisDismissed = new Set();
+  persistDismissed({ all: true });
   syncTreeHealth();
   rerenderAnalysis();
 }
@@ -1468,20 +1505,11 @@ function _copyLatestFindingPrompt(i) {
   if (f) copyText(findingPrompt(f), 'Prompt copied — paste into any Claude Code session');
 }
 
-// Dismissals share the health view's session-only set, so a finding dropped
-// here disappears there too (and vice versa).
+// Dismissals share the health view's set, so a finding dropped here
+// disappears there too (and vice versa).
 function _dismissLatestFinding(btn, i) {
   const f = mergedRunView(lastAnalysisSt)?.result?.findings?.[i];
-  if (!f) return;
-  const card = btn.closest('.analysis-card');
-  card.style.maxHeight = `${card.offsetHeight}px`;
-  requestAnimationFrame(() => card.classList.add('leaving'));
-  setTimeout(() => {
-    analysisDismissed.add(findingKey(f));
-    fixSelected.delete(findingKey(f));
-    syncTreeHealth();
-    renderPreview();
-  }, 280);
+  if (f) dismissFinding(btn, f, renderPreview);
 }
 
 function _toggleFixSelect(idx) {
@@ -1531,7 +1559,7 @@ function renderAnalysisHead(st, r, ts) {
 }
 
 function _setAnalysisRun(i) {
-  resetAnalysisView(i); // clears dismissals, so the tree badges must be restored too
+  resetAnalysisView(i); // clears the file filter, so the tree badges must be restored too
   syncTreeHealth();
   rerenderAnalysis();
 }
@@ -1567,17 +1595,34 @@ function renderRunsStrip(st) {
   return html;
 }
 
-function renderAnalysis(st) {
-  if (st.running) {
-    return '<div class="analysis-box"><div class="analysis-status"><span class="analysis-spinner"></span>Analyzing memory with Claude Code — usually 30–90s…</div></div>';
+// The previous review stays on screen while runs are in flight — running state is a
+// banner above it, not a replacement view.
+function renderRunningBanner(st) {
+  const pending = st.pending || [];
+  if (!pending.length) return '';
+  let html = '';
+  for (const p of pending) {
+    const bits = [];
+    if (p.model) bits.push(p.model);
+    if (p.scopeDesc) bits.push(p.scopeDesc);
+    if (p.startedAt) bits.push(`started ${analysisTimeAgo(p.startedAt)}`);
+    html += `<div class="analysis-status"><span class="analysis-spinner"></span>Analyzing memory with Claude Code — usually 30–90s…${bits.length ? ` <span class="analysis-meta">${esc(bits.join(' · '))}</span>` : ''}</div>`;
   }
+  return html;
+}
+
+function renderAnalysis(st) {
   const runs = st.runs || [];
   const shown = analysisRunIdx < 0 ? mergedRunView(st) : runs[analysisRunIdx];
+  // The wrapper stays in the DOM even when empty so quiet polls can update just
+  // the banner in place instead of rebuilding the whole review (see refreshAnalysis).
   let html = '<div class="analysis-box">';
+  html += `<div id="runningBanner">${renderRunningBanner(st)}</div>`;
   html += renderAnalysisHead(st, shown?.result, shown?.ts);
+  // A failed run no longer wipes history — show the error above the surviving review.
   if (st.error) {
-    html += `<div class="analysis-status analysis-status-error">${esc(st.error)} <button class="action-btn small" onclick="_runAnalysis(true)">Retry</button></div></div>`;
-    return html;
+    html += `<div class="analysis-status analysis-status-error">${esc(st.error)} <button class="action-btn small" onclick="_runAnalysis(true)">Retry</button></div>`;
+    if (!shown) return `${html}</div>`;
   }
   if (!shown) {
     html += '<div class="analysis-empty">No analysis yet — pick a scope and run one.</div></div>';
@@ -1601,7 +1646,7 @@ function renderAnalysis(st) {
       html += `${sev} ${n}</button>`;
     }
     if (analysisFileFilter) {
-      html += `<button class="sev-pill active file-filter-pill" onclick="_setFileFilter('${escAttrJs(analysisFileFilter.id)}','${escAttrJs(analysisFileFilter.name)}')" title="Clear the file filter">${esc(analysisFileFilter.name)} ×</button>`;
+      html += `<button class="sev-pill active" onclick="_setFileFilter('${escAttrJs(analysisFileFilter.id)}','${escAttrJs(analysisFileFilter.name)}')" title="Clear the file filter">${esc(analysisFileFilter.name)} ×</button>`;
     }
     if (analysisDismissed.size) {
       html += `<span class="dismissed-note">${analysisDismissed.size} dismissed · <a onclick="_restoreDismissed()">restore</a></span>`;

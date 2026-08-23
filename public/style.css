@@ -1870,12 +1870,6 @@ a.file-chip:hover {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
 }
-.file-filter-pill {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .hv-cell.hv-clean {
   background: var(--bg-elevated);
 }
