@@ -1183,6 +1183,10 @@ body.light {
 .analysis-status-error {
   color: var(--error);
 }
+.analysis-stalled {
+  color: var(--text-muted);
+  font-style: italic;
+}
 .analysis-spinner {
   width: 12px;
   height: 12px;
@@ -1442,6 +1446,15 @@ a.file-chip:hover {
   color: var(--accent-text);
   background: var(--accent-dim);
 }
+/* user-scope runs are shared across projects — tint the chip to set them apart */
+.run-chip-user {
+  border-color: rgba(192, 128, 80, 0.45);
+}
+.run-chip-user.active {
+  border-color: var(--scope-user);
+  color: var(--scope-user);
+  background: rgba(192, 128, 80, 0.12);
+}
 .sev-strip {
   display: flex;
   gap: 8px;
@@ -1560,6 +1573,14 @@ a.file-chip:hover {
 .scope-tag.t-claudemd {
   background: rgba(122, 181, 160, 0.18);
   color: var(--scope-project);
+}
+.scope-tag.t-user {
+  background: rgba(192, 128, 80, 0.18);
+  color: var(--scope-user);
+}
+.scope-tag.t-cross {
+  background: rgba(155, 130, 190, 0.18);
+  color: var(--scope-rule);
 }
 .scope-meta {
   color: var(--text-muted);

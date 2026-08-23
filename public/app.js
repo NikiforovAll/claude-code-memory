@@ -904,7 +904,19 @@ let analysisPollTimer = null;
 let lastAnalysisSt = null;
 let analysisFindings = []; // findings of the rendered result, addressed by index from handlers
 let analysisFilter = 'all';
-let analysisDismissed = new Set(); // server-persisted per project; keys are `${kind}|${title}`
+// Server persists dismissals per scope: project findings (cross included) in the
+// project entry, user-scope findings in the shared user entry (visible from every
+// project). Keys are `${kind}|${title}`.
+const dismissedByScope = { project: new Set(), user: new Set() };
+function dismissScope(f) {
+  return f.scope === 'user' ? 'user' : 'project';
+}
+function isDismissed(f) {
+  return dismissedByScope[dismissScope(f)].has(findingKey(f));
+}
+function dismissedCount() {
+  return dismissedByScope.project.size + dismissedByScope.user.size;
+}
 let dismissWrites = 0; // dismiss POSTs in flight — polls must not clobber the local set meanwhile
 let lastPollKey = null; // fingerprint of the last rendered analysis state
 let analysisTs = null; // reset filters when a new result lands
@@ -936,7 +948,7 @@ function _setFileFilter(id, name) {
 function findingMatchesFileFilter(f) {
   if (!analysisFileFilter) return true;
   return (f.files || []).some(
-    (n) => n === analysisFileFilter.name || findingFileIds(n).includes(analysisFileFilter.id),
+    (n) => n === analysisFileFilter.name || findingFileIds(n, f.scope).includes(analysisFileFilter.id),
   );
 }
 
@@ -949,9 +961,9 @@ function computeTreeHealth(st) {
   if (!run) return;
   for (const s of runAuditedSources(run)) auditedIds.add(s.id);
   for (const f of run.result?.findings || []) {
-    if (analysisDismissed.has(findingKey(f))) continue;
+    if (isDismissed(f)) continue;
     for (const name of f.files || []) {
-      for (const id of findingFileIds(name)) {
+      for (const id of findingFileIds(name, f.scope)) {
         const cur = treeHealth.get(id) || { high: 0, med: 0, low: 0 };
         cur[f.severity] = (cur[f.severity] || 0) + 1;
         treeHealth.set(id, cur);
@@ -1015,18 +1027,27 @@ async function refreshAnalysis() {
   } catch {
     return;
   }
-  const isNew = st.ts !== analysisTs;
+  const tsKey = `${st.ts}|${st.user?.ts || ''}`;
+  const isNew = tsKey !== analysisTs;
   if (isNew) {
-    analysisTs = st.ts;
+    analysisTs = tsKey;
     resetAnalysisView();
   }
   // A dismiss POST in flight owns the set — adopting the server's (older) copy here
   // would briefly resurrect the finding the user just dismissed.
-  if (!dismissWrites) analysisDismissed = new Set(st.dismissed || []);
+  if (!dismissWrites) {
+    dismissedByScope.project = new Set(st.dismissed || []);
+    dismissedByScope.user = new Set(st.user?.dismissed || []);
+  }
   lastAnalysisSt = st;
   // Polls where only the banner clock changed must not rebuild the review DOM —
   // that would tear down the cards mid-interaction every 2.5s while a run is in flight.
-  const pollKey = JSON.stringify([st.ts, st.error, [...analysisDismissed], (st.pending || []).map((p) => p.id)]);
+  const pollKey = JSON.stringify([
+    tsKey,
+    st.error,
+    [...dismissedByScope.project, ...dismissedByScope.user],
+    (st.pending || []).map((p) => `${p.id}${p.stalled ? ':stalled' : ''}`),
+  ]);
   const banner = document.getElementById('runningBanner');
   if (pollKey === lastPollKey && banner) {
     banner.innerHTML = renderRunningBanner(st);
@@ -1042,7 +1063,11 @@ async function refreshAnalysis() {
   }
   lastPollKey = pollKey;
   clearTimeout(analysisPollTimer);
-  if ((st.pending || []).length) analysisPollTimer = setTimeout(refreshAnalysis, 2500);
+  // Stalled-only pendings keep a slow poll alive — the banner promises a late
+  // completion will surface, so it must actually be able to.
+  const pend = st.pending || [];
+  if (pend.some((p) => !p.stalled)) analysisPollTimer = setTimeout(refreshAnalysis, 2500);
+  else if (pend.length) analysisPollTimer = setTimeout(refreshAnalysis, 30000);
 }
 
 // Re-render from the cached state — used by scope/filter/dismiss handlers so a
@@ -1092,6 +1117,13 @@ function analysisScopeGroups() {
       cls: 't-agent',
       tag: 'agent',
       items: stackData.filter((s) => s.scope === 'agent-memory'),
+    },
+    {
+      key: 'user',
+      label: 'User CLAUDE.md',
+      cls: 't-user',
+      tag: 'user',
+      items: stackData.filter((s) => s.scope === 'user' && !s.parentId),
     },
   ].filter((g) => g.items.length);
 }
@@ -1185,20 +1217,31 @@ function memoryDirPath() {
 }
 
 function findingPrompt(f) {
-  const dir = memoryDirPath();
-  const lines = [
-    dir
+  let header;
+  if (f.scope === 'user') {
+    const path = stackData.find((s) => s.id === 'user-claude-md')?.path || '~/.claude/CLAUDE.md';
+    header = `In the user-level Claude Code instructions at ${path}, apply this fix:`;
+  } else {
+    const dir = memoryDirPath();
+    header = dir
       ? `In the Claude Code auto-memory at ${dir}, apply this fix:`
-      : "In this project's Claude Code auto-memory, apply this fix:",
-    '',
-    `Finding (${f.kind}, ${f.severity}): ${f.title}`,
-    f.detail,
-    '',
-    `Action: ${f.suggestion}`,
-  ];
+      : "In this project's Claude Code auto-memory, apply this fix:";
+  }
+  const lines = [header, '', `Finding (${f.kind}, ${f.severity}): ${f.title}`, f.detail, '', `Action: ${f.suggestion}`];
   if ((f.files || []).length) lines.push(`Files: ${f.files.join(', ')}`);
-  lines.push('', 'Update MEMORY.md index lines if files are added, renamed, or removed.');
+  if (f.scope !== 'user') lines.push('', 'Update MEMORY.md index lines if files are added, renamed, or removed.');
   return lines.join('\n');
+}
+
+// Badge shown next to the kind for non-project findings; project scope is the
+// default and carries no badge. Reuses the scope-tag palette from the picker.
+function scopeBadge(f) {
+  if (!f.scope || f.scope === 'project') return '';
+  const title =
+    f.scope === 'user'
+      ? 'User-scope finding — shared across projects'
+      : 'Cross-scope finding — cites both user and project instructions';
+  return `<span class="scope-tag t-${esc(f.scope)}" title="${esc(title)}">${esc(f.scope)}</span>`;
 }
 
 function copyText(text, okMsg) {
@@ -1214,23 +1257,23 @@ function _copyFindingPrompt(idx) {
 }
 
 function _copyAllFindings() {
-  const live = analysisFindings.filter((f) => !analysisDismissed.has(findingKey(f)));
+  const live = analysisFindings.filter((f) => !isDismissed(f));
   if (!live.length) return;
   copyText(live.map(findingPrompt).join('\n\n---\n\n'), `${live.length} prompts copied`);
 }
 
 // The local set already changed, so the UI never waits; the response's authoritative
 // list is adopted once no other write is racing it.
-function persistDismissed(body) {
+function persistDismissed(scope, body) {
   dismissWrites++;
   fetch('/api/memory/analysis/dismiss', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, scope }),
   })
     .then((r) => r.json())
     .then((d) => {
-      if (dismissWrites === 1 && Array.isArray(d.dismissed)) analysisDismissed = new Set(d.dismissed);
+      if (dismissWrites === 1 && Array.isArray(d.dismissed)) dismissedByScope[scope] = new Set(d.dismissed);
     })
     .catch(() => {})
     .finally(() => dismissWrites--);
@@ -1243,8 +1286,9 @@ function dismissFinding(btn, f, repaint) {
   card.style.maxHeight = `${card.offsetHeight}px`;
   requestAnimationFrame(() => card.classList.add('leaving'));
   setTimeout(() => {
-    analysisDismissed.add(findingKey(f));
-    persistDismissed({ key: findingKey(f) });
+    // User-scope dismissals go to the shared user entry so they hold across projects.
+    dismissedByScope[dismissScope(f)].add(findingKey(f));
+    persistDismissed(dismissScope(f), { key: findingKey(f) });
     fixSelected.delete(findingKey(f)); // a dismissed finding can't stay queued in the fix plan
     syncTreeHealth();
     repaint();
@@ -1257,8 +1301,10 @@ function _dismissFinding(btn, idx) {
 }
 
 function _restoreDismissed() {
-  analysisDismissed = new Set();
-  persistDismissed({ all: true });
+  for (const scope of Object.keys(dismissedByScope)) {
+    if (dismissedByScope[scope].size) persistDismissed(scope, { all: true });
+    dismissedByScope[scope] = new Set();
+  }
   syncTreeHealth();
   rerenderAnalysis();
 }
@@ -1290,14 +1336,14 @@ function fileChipScope(source) {
   return source.scope === 'agent-memory' ? 'agent' : source.scope;
 }
 
-// Mirrors the server's analyzableSources: the user CLAUDE.md and rules are
-// reference-only context for the analyzer, never audited, even when their ids
-// ride along in the run's scope.
+// Mirrors the server's analyzableSources: rules stay reference-only context for
+// the analyzer; the user CLAUDE.md is auditable (project-blind reviewer, results
+// shared across projects via the user-scope entry).
 function analyzableSource(s) {
   return (
     s.scope === 'memory' ||
     s.scope === 'agent-memory' ||
-    ((s.scope === 'skill' || s.scope === 'project' || s.scope === 'local') && !s.parentId)
+    ((s.scope === 'skill' || s.scope === 'user' || s.scope === 'project' || s.scope === 'local') && !s.parentId)
   );
 }
 
@@ -1314,30 +1360,44 @@ function runAuditedSources(run) {
 }
 
 // Findings name files by bare name, which collides across scopes (user vs
-// project CLAUDE.md). Attribute to audit-eligible sources first; fall back to
+// project CLAUDE.md) — the finding's `scope` field breaks the tie: user-scope
+// findings map only to user sources, project-scope ones exclude them ("cross"
+// keeps both sides). Attribute to audit-eligible sources first; fall back to
 // any source with that name only when none are eligible — the agent may report
 // out-of-scope files it read recursively, and those still deserve a badge.
-function findingFileIds(name) {
+function findingFileIds(name, scope) {
   // The agent sometimes reports a relative path instead of the display name
   // (e.g. "dev-tools/bonya/.claude/skills/bonya/SKILL.md" for skill
   // "dev-tools/bonya:bonya") — match those by path suffix. Only slash-bearing
   // names qualify: a bare "SKILL.md" would suffix-match every skill.
-  const n = name.replace(/\\/g, '/');
+  // The agent sometimes copies the prompt's scope marker into the name
+  // ("CLAUDE.md (user)") — strip it, the scope field already carries it.
+  const n = name.replace(/\s*\((user|project|local)\)$/, '').replace(/\\/g, '/');
   const byPath = (s) => {
     if (!n.includes('/')) return false;
     const p = (s.path || '').replace(/\\/g, '/');
     return p === n || p.endsWith(`/${n}`);
   };
-  const matches = stackData.filter((s) => s.name === name || byPath(s));
+  let matches = stackData.filter((s) => s.name === n || byPath(s));
+  if (scope === 'user') matches = matches.filter((s) => s.scope === 'user');
+  else if (scope === 'project') matches = matches.filter((s) => s.scope !== 'user');
   const eligible = matches.filter((s) => !s.parentId && analyzableSource(s));
   return (eligible.length ? eligible : matches).map((s) => s.id);
+}
+
+// Project runs and shared user-scope runs interleave into one timeline —
+// run chips, the trend, and the merged view all address runs through this.
+function allAnalysisRuns(st) {
+  const proj = (st?.runs || []).map((run) => ({ run, scope: 'project' }));
+  const user = (st?.user?.runs || []).map((run) => ({ run, scope: 'user' }));
+  return [...proj, ...user].sort((a, b) => b.run.ts - a.run.ts);
 }
 
 // The default health view merges runs: each file carries the verdict of the
 // newest run that audited it, so a narrow re-run (say, one skill) overlays the
 // wider picture instead of replacing it. Run chips still show single runs.
 function mergedRunView(st) {
-  const runs = st?.runs || [];
+  const runs = allAnalysisRuns(st).map((e) => e.run);
   if (runs.length <= 1) return runs[0] || null;
   const owner = new Map(); // file id -> newest run that audited it
   const audited = [];
@@ -1353,7 +1413,7 @@ function mergedRunView(st) {
   for (const run of runs) {
     for (const f of run.result?.findings || []) {
       if (seen.has(findingKey(f))) continue;
-      const ids = (f.files || []).flatMap(findingFileIds);
+      const ids = (f.files || []).flatMap((n) => findingFileIds(n, f.scope));
       // A finding survives while its run still owns a file it touches — a newer
       // run that re-audited the file supersedes the old verdict. File-less
       // findings (suggested new memories) belong to the latest run only.
@@ -1389,10 +1449,10 @@ function sevCounts(findings) {
 
 function renderHealthDash(st, shown) {
   // Score, tiles, and clean count track the live (non-dismissed) list they sit above.
-  const findings = (shown.result?.findings || []).filter((f) => !analysisDismissed.has(findingKey(f)));
+  const findings = (shown.result?.findings || []).filter((f) => !isDismissed(f));
   const c = sevCounts(findings);
   const audited = runAuditedSources(shown);
-  const dirty = new Set(findings.flatMap((f) => (f.files || []).flatMap(findingFileIds)));
+  const dirty = new Set(findings.flatMap((f) => (f.files || []).flatMap((n) => findingFileIds(n, f.scope))));
   const clean = audited.filter((s) => !dirty.has(s.id)).length;
   const score = healthScore(findings);
   const scoreColor = score >= 80 ? 'var(--success)' : score >= 50 ? 'var(--warning)' : 'var(--error)';
@@ -1416,13 +1476,13 @@ function renderHealthDash(st, shown) {
 
 // Findings per run as stacked mini-columns, oldest to newest; click switches the shown run.
 function renderTrend(st) {
-  const runs = st.runs || [];
+  const runs = allAnalysisRuns(st);
   if (runs.length < 2) return '';
   let html = '<div class="hv-tile hv-trend-tile"><span class="hv-lbl">Trend</span><div class="hv-trend">';
   for (let i = runs.length - 1; i >= 0; i--) {
-    const c = sevCounts(runs[i].result?.findings || []);
+    const c = sevCounts(runs[i].run.result?.findings || []);
     const px = (n) => (n ? Math.max(3, n * 4) : 0);
-    html += `<div class="hv-trun${i === analysisRunIdx ? ' cur' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(analysisTimeAgo(runs[i].ts))} — ${c.high} high · ${c.med} med · ${c.low} low">`;
+    html += `<div class="hv-trun${i === analysisRunIdx ? ' cur' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(analysisTimeAgo(runs[i].run.ts))}${runs[i].scope === 'user' ? ' · user' : ''} — ${c.high} high · ${c.med} med · ${c.low} low">`;
     if (c.low) html += `<i class="tl" style="height:${px(c.low)}px"></i>`;
     if (c.med) html += `<i class="tm" style="height:${px(c.med)}px"></i>`;
     if (c.high) html += `<i class="th" style="height:${px(c.high)}px"></i>`;
@@ -1437,11 +1497,11 @@ function renderTrend(st) {
 function renderMemoryMap(shown) {
   const audited = runAuditedSources(shown);
   if (!audited.length) return '';
-  const findings = (shown.result?.findings || []).filter((f) => !analysisDismissed.has(findingKey(f)));
+  const findings = (shown.result?.findings || []).filter((f) => !isDismissed(f));
   const perFile = new Map();
   for (const f of findings) {
     for (const name of f.files || []) {
-      for (const id of findingFileIds(name)) {
+      for (const id of findingFileIds(name, f.scope)) {
         const cur = perFile.get(id) || { high: 0, med: 0, low: 0 };
         cur[f.severity]++;
         perFile.set(id, cur);
@@ -1475,16 +1535,14 @@ function renderFileFindings(source) {
   if (!run) return '';
   const hits = (run.result?.findings || [])
     .map((f, i) => [f, i])
-    .filter(
-      ([f]) =>
-        (f.files || []).some((n) => findingFileIds(n).includes(source.id)) && !analysisDismissed.has(findingKey(f)),
-    );
+    .filter(([f]) => (f.files || []).some((n) => findingFileIds(n, f.scope).includes(source.id)) && !isDismissed(f));
   if (!hits.length) return '';
   let html = `<div class="preview-findings"><div class="pf-label">Claude analysis — ${hits.length} finding${hits.length > 1 ? 's' : ''} for this file</div>`;
   for (const [f, i] of hits) {
     html += `<div class="analysis-card pf-card ${esc(`sev-${f.severity}`)}">`;
     html += `<div class="analysis-card-head" onclick="this.parentElement.classList.toggle('expanded')">`;
     html += `<span class="kind-badge ${esc(`kind-${f.kind}`)}">${esc(f.kind)}</span>`;
+    html += scopeBadge(f);
     html += `<span class="analysis-card-title">${esc(f.title)}</span>`;
     html += '<span class="card-actions">';
     html += `<button class="card-btn" onclick="event.stopPropagation();_copyLatestFindingPrompt(${i})" title="Copy an agent-ready instruction for this finding">${COPY_ICON}Copy prompt</button>`;
@@ -1546,6 +1604,7 @@ function renderAnalysisHead(st, r, ts) {
   if (r?.model) meta.push(r.model);
   if (r?.scopeDesc) meta.push(`scope: ${r.scopeDesc}`);
   if (st.stale && analysisRunIdx <= 0) meta.push('memory changed since');
+  if (st.user?.stale && analysisRunIdx < 0) meta.push('user CLAUDE.md changed since');
   let html = '<div class="analysis-head">';
   html += '<span class="analysis-title">Claude analysis</span>';
   html += `<span class="analysis-meta">${esc(meta.join(' · '))}</span>`;
@@ -1564,32 +1623,33 @@ function _setAnalysisRun(i) {
   rerenderAnalysis();
 }
 
-async function _deleteAnalysisRun(ev, ts) {
+async function _deleteAnalysisRun(ev, ts, scope) {
   ev.stopPropagation();
   await fetch('/api/memory/analysis/delete-run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ts }),
+    body: JSON.stringify({ ts, scope }),
   });
   resetAnalysisView();
   analysisTs = null; // force refreshAnalysis to re-adopt the new latest run
   refreshAnalysis();
 }
 
-// Past runs for this project (newest first).
+// Past runs, newest first — project runs plus the shared user-scope runs.
 function renderRunsStrip(st) {
-  const runs = st.runs || [];
+  const runs = allAnalysisRuns(st);
   if (!runs.length) return '';
   let html = '<div class="runs-strip"><span class="runs-label">runs</span>';
   if (runs.length > 1) {
     html += `<span class="run-chip${analysisRunIdx < 0 ? ' active' : ''}" onclick="_setAnalysisRun(-1)" title="Each file shows the newest run that audited it">current · ${runs.length} runs merged</span>`;
   }
-  runs.forEach((run, i) => {
+  runs.forEach(({ run, scope }, i) => {
     const r = run.result || {};
     const bits = [analysisTimeAgo(run.ts)];
+    if (scope === 'user') bits.push('user');
     if (r.model) bits.push(r.model);
     if (r.costUsd != null) bits.push(`$${r.costUsd.toFixed(2)}`);
-    html += `<span class="run-chip${i === analysisRunIdx ? ' active' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(r.scopeDesc || '')}">${esc(bits.join(' · '))}<button class="run-chip-x" onclick="_deleteAnalysisRun(event, ${escAttrJs(run.ts)})" title="Delete this run">×</button></span>`;
+    html += `<span class="run-chip${scope === 'user' ? ' run-chip-user' : ''}${i === analysisRunIdx ? ' active' : ''}" onclick="_setAnalysisRun(${i})" title="${esc(r.scopeDesc || '')}">${esc(bits.join(' · '))}<button class="run-chip-x" onclick="_deleteAnalysisRun(event, ${escAttrJs(run.ts)}, '${escAttrJs(scope)}')" title="Delete this run">×</button></span>`;
   });
   html += '</div>';
   return html;
@@ -1606,14 +1666,18 @@ function renderRunningBanner(st) {
     if (p.model) bits.push(p.model);
     if (p.scopeDesc) bits.push(p.scopeDesc);
     if (p.startedAt) bits.push(`started ${analysisTimeAgo(p.startedAt)}`);
-    html += `<div class="analysis-status"><span class="analysis-spinner"></span>Analyzing memory with Claude Code — usually 30–90s…${bits.length ? ` <span class="analysis-meta">${esc(bits.join(' · '))}</span>` : ''}</div>`;
+    const meta = bits.length ? ` <span class="analysis-meta">${esc(bits.join(' · '))}</span>` : '';
+    if (p.stalled) {
+      html += `<div class="analysis-status analysis-stalled">Run appears stalled (server restarted mid-run?) — its result will surface if it ever completes.${meta}</div>`;
+    } else {
+      html += `<div class="analysis-status"><span class="analysis-spinner"></span>Analyzing memory with Claude Code — usually 30–90s…${meta}</div>`;
+    }
   }
   return html;
 }
 
 function renderAnalysis(st) {
-  const runs = st.runs || [];
-  const shown = analysisRunIdx < 0 ? mergedRunView(st) : runs[analysisRunIdx];
+  const shown = analysisRunIdx < 0 ? mergedRunView(st) : allAnalysisRuns(st)[analysisRunIdx]?.run;
   // The wrapper stays in the DOM even when empty so quiet polls can update just
   // the banner in place instead of rebuilding the whole review (see refreshAnalysis).
   let html = '<div class="analysis-box">';
@@ -1635,7 +1699,7 @@ function renderAnalysis(st) {
   if (r.summary) html += `<div class="analysis-summary">${esc(r.summary)}</div>`;
   html += renderMemoryMap(shown);
 
-  const live = analysisFindings.filter((f) => !analysisDismissed.has(findingKey(f)));
+  const live = analysisFindings.filter((f) => !isDismissed(f));
   const count = (sev) => live.filter((f) => f.severity === sev).length;
   if (analysisFindings.length) {
     html += '<div class="sev-strip">';
@@ -1648,8 +1712,9 @@ function renderAnalysis(st) {
     if (analysisFileFilter) {
       html += `<button class="sev-pill active" onclick="_setFileFilter('${escAttrJs(analysisFileFilter.id)}','${escAttrJs(analysisFileFilter.name)}')" title="Clear the file filter">${esc(analysisFileFilter.name)} ×</button>`;
     }
-    if (analysisDismissed.size) {
-      html += `<span class="dismissed-note">${analysisDismissed.size} dismissed · <a onclick="_restoreDismissed()">restore</a></span>`;
+    const nDismissed = dismissedCount();
+    if (nDismissed) {
+      html += `<span class="dismissed-note">${nDismissed} dismissed · <a onclick="_restoreDismissed()">restore</a></span>`;
     }
     if (fixSelected.size) {
       html += `<button class="card-btn fix-plan-btn" onclick="_copyFixPlan()" title="Copy the selected findings as one ordered fix prompt">${COPY_ICON}Copy fix plan (${fixSelected.size})</button>`;
@@ -1668,6 +1733,7 @@ function renderAnalysis(st) {
     html += '<div class="analysis-card-head">';
     html += `<input type="checkbox" class="fix-check" ${fixSelected.has(findingKey(f)) ? 'checked ' : ''}onclick="_toggleFixSelect(${idx})" title="Queue for the fix plan">`;
     html += `<span class="kind-badge ${esc(`kind-${f.kind}`)}">${esc(f.kind)}</span>`;
+    html += scopeBadge(f);
     html += `<span class="analysis-card-title">${esc(f.title)}</span>`;
     html += '<span class="card-actions">';
     html += `<button class="card-btn" onclick="_copyFindingPrompt(${idx})" title="Copy an agent-ready instruction for this finding">${COPY_ICON}Copy prompt</button>`;
@@ -1679,7 +1745,8 @@ function renderAnalysis(st) {
     for (const fn of files) {
       // Same name-or-path resolution as the map and tree badges — a chip must
       // stay clickable when the agent reported a path instead of the name.
-      const child = byName[fn] || stackData.find((s) => findingFileIds(fn).includes(s.id));
+      const ids = findingFileIds(fn, f.scope);
+      const child = stackData.find((s) => ids.includes(s.id)) || byName[fn];
       const scopeTag = fileChipScope(child);
       if (child) {
         html += `<a class="file-chip" href="#" onclick="selectFile('${escAttrJs(child.id)}');return false" title="${esc(child.path)}">${FILE_ICON}${esc(fn)}<span class="fscope fscope-${esc(scopeTag)}">${esc(scopeTag)}</span></a>`;

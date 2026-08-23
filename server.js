@@ -711,23 +711,21 @@ const ANALYSIS_SCHEMA = {
       items: {
         type: 'object',
         properties: {
-          kind: { type: 'string', enum: ['duplicate', 'contradiction', 'promote', 'merge', 'stale', 'invalidate', 'quality'] },
+          kind: { type: 'string', enum: ['duplicate', 'contradiction', 'promote', 'merge', 'stale', 'invalidate', 'quality', 'override', 'shadow', 'demote'] },
           severity: { type: 'string', enum: ['high', 'med', 'low'] },
+          scope: { type: 'string', enum: ['user', 'project', 'cross'] },
           title: { type: 'string' },
           detail: { type: 'string' },
           files: { type: 'array', items: { type: 'string' } },
           suggestion: { type: 'string' },
           evidence: { type: 'string' },
         },
-        required: ['kind', 'severity', 'title', 'detail', 'files', 'suggestion'],
+        required: ['kind', 'severity', 'scope', 'title', 'detail', 'files', 'suggestion'],
       },
     },
   },
   required: ['summary', 'findings'],
 };
-
-// Generous: the run fans out one verification subagent per audited file.
-const ANALYZE_TIMEOUT_MS = 600_000;
 
 // Analysis state lives in one file per project under ~/.claude/memory-analysis/,
 // named by the same path encoding Claude Code uses for its projects dir. Disk is the
@@ -738,14 +736,26 @@ const ANALYSIS_DIR = path.join(CLAUDE_DIR, 'memory-analysis');
 const EMPTY_ANALYSIS = { pending: [], result: null, error: null, hash: null, ts: null, ids: null, runs: [], dismissed: [] };
 const MAX_ANALYSIS_RUNS = 10;
 
+// Findings about the user-level CLAUDE.md are shared across projects: they live in
+// their own entry so any project's view (and dismissals) sees the same audit.
+// The sentinel contains ':' mid-string, which encodeProjectPath output never keeps,
+// so it cannot collide with a real project file.
+const USER_SCOPE = '::user::';
+
 function analysisFile(project) {
+  if (project === USER_SCOPE) return path.join(ANALYSIS_DIR, 'user-scope.json');
   return path.join(ANALYSIS_DIR, `${encodeProjectPath(project)}.json`);
 }
 
 // A pending entry whose server died mid-run would otherwise show as running forever.
-function prunePending(pending) {
-  const cutoff = Date.now() - ANALYZE_TIMEOUT_MS;
-  return (pending || []).filter((p) => p.startedAt > cutoff);
+// Instead of deleting it (losing the trace), mark it stalled: the UI stops spinning
+// but the entry survives — if its run ever completes, the completion handler still
+// removes it by id and the result surfaces. Runs are never killed, so stalled is a
+// hint ("probably orphaned by a server restart"), not a verdict.
+const PENDING_STALL_MS = 1_800_000;
+function markStalePending(pending) {
+  const cutoff = Date.now() - PENDING_STALL_MS;
+  return (pending || []).map((p) => (p.startedAt > cutoff ? p : { ...p, stalled: true }));
 }
 
 function getAnalysisState(project) {
@@ -756,7 +766,7 @@ function getAnalysisState(project) {
     return { ...EMPTY_ANALYSIS };
   }
   const loaded = { ...EMPTY_ANALYSIS, ...st };
-  loaded.pending = prunePending(loaded.pending);
+  loaded.pending = markStalePending(loaded.pending);
   // result/ts/hash/ids are a projection of the newest run — derived here so no
   // writer can persist them out of sync with the runs history.
   const latest = (loaded.runs || [])[0];
@@ -827,7 +837,20 @@ const RUBRIC_CLAUDE_MD = [
   '- Missing high-value content is also a finding: the build/test/run commands, non-obvious architecture facts, and repo-specific gotchas are exactly what the file exists to carry.',
 ].join('\n');
 
-function buildAnalyzePrompt(memSources, userClaudeMd, skillSources, agentSources, claudeMdSources) {
+// The user-level CLAUDE.md loads in every session of every project, so its rubric is
+// project-blind: rules must hold everywhere, and verification runs against the machine
+// (PATH, ~/.claude), never against whichever repo happens to be the working directory.
+const RUBRIC_CLAUDE_MD_USER = [
+  'User-level CLAUDE.md criteria (global instructions, loaded in every session of every project):',
+  '- Universality: every rule must hold on any project. Flag rules referencing one specific repo, stack, tool chain, or project path — they belong in that project\'s CLAUDE.md (kind: demote).',
+  '- Machine verification only: check that tools the file names exist on PATH (command -v / which / where) and that files, skills, or agents it references exist under ~/.claude. NEVER verify against the working directory\'s repository — it is an arbitrary project and proves nothing about a global rule.',
+  '- Self-consistency: flag sections, tags, or mnemonics that contradict or duplicate each other within the file and its imports.',
+  '- Executability: flag standards name-dropped without concrete behaviors ("follow style guide X") and rules the model cannot act on — require the 2-3 specific behaviors the user actually wants.',
+  '- Flag emphasis inflation (all-caps, NEVER/ALWAYS without stakes) and vague or no-op rules the model cannot act on.',
+  '- Preferences should carry their why: a bare prohibition gets overridden when inconvenient; a one-clause reason makes it generalize.',
+].join('\n');
+
+function buildAnalyzePrompt(memSources, skillSources, agentSources, claudeMdSources, userSrc, userAudited) {
   const fullSkills = skillSources || [];
   const fullAgent = agentSources || [];
   const fullClaudeMd = claudeMdSources || [];
@@ -836,6 +859,8 @@ function buildAnalyzePrompt(memSources, userClaudeMd, skillSources, agentSources
   if (fullSkills.length) audited.push('project skills (SKILL.md files)');
   if (fullAgent.length) audited.push('agent memory files');
   if (fullClaudeMd.length) audited.push('CLAUDE.md instruction files');
+  if (userAudited) audited.push('the user-level (global) CLAUDE.md');
+  const crossScope = userAudited && fullClaudeMd.length;
   const parts = [
     `You are auditing what shapes Claude Code behavior in this project: ${audited.join(', ')}. Find real problems; an empty findings list is a valid answer. Do not pad.`,
     '',
@@ -847,22 +872,38 @@ function buildAnalyzePrompt(memSources, userClaudeMd, skillSources, agentSources
     '- stale: content that is outdated — verified against the repo when checkable, or judged from its own text otherwise.',
     '- invalidate: a rule or memory that verification shows no longer applies at all (the thing it guards against is gone, the file/tool it references was removed, the convention is now enforced elsewhere) — suggest deleting it.',
     '- quality: content that is vague, missing its why, or unlikely to change agent behavior — reported by the reviewers against their rubrics.',
+  ];
+  if (crossScope) {
+    parts.push(
+      '- override: a project rule that contradicts a user-level rule. This is often intentional (a project legitimately specializes global preferences) — suggest making the override explicit ("overrides global X because Y"), not deleting either side.',
+      '- shadow: a project rule that restates a user-level rule near-verbatim; the project copy is the deletion candidate.',
+    );
+  }
+  if (userAudited) {
+    parts.push('- demote: a user-level rule that is specific to one project or stack and belongs in that project\'s CLAUDE.md — the inverse of promote.');
+  }
+  parts.push(
     '',
     'Rules:',
-    '- You are the orchestrator; do not review files yourself. Your working directory is the project root. For every audited file, launch the type-matched reviewer subagent via your Agent tool — "memory-reviewer" for memory and agent-memory files, "skill-reviewer" for skills, "claude-md-reviewer" for CLAUDE.md files — all in a single parallel batch. Pass each one only the file name and its full content; the reviewers carry their own criteria and verify claims against the repo.',
-    '- Your own job: merge the reviewers\' per-file findings and add the cross-file kinds (duplicate, contradiction, merge, promote) by comparing the files side by side.',
+    `- You are the orchestrator; do not review files yourself. Your working directory is the project root. For every audited file, launch the type-matched reviewer subagent via your Agent tool — "memory-reviewer" for memory and agent-memory files, "skill-reviewer" for skills, "claude-md-reviewer" for project CLAUDE.md files${userAudited ? ', "claude-md-user-reviewer" for the user-level CLAUDE.md' : ''} — all in a single parallel batch of blocking calls (never background/async agents — you must hold your final report until every reviewer has returned). Pass each one only the file name and its full content; the reviewers carry their own criteria and verify claims against the repo${userAudited ? ' (the user-level reviewer verifies against the machine, never the repo)' : ''}.`,
+    `- Your own job: merge the reviewers' per-file findings and add the cross-file kinds (duplicate, contradiction, merge, promote${crossScope ? ', override, shadow' : ''}) by comparing the files side by side.`,
     '- Verification is a filter: drop any finding a reviewer\'s claim checks disproved, and never report "likely outdated" for a claim a reviewer confirmed still HOLDS. Record what was checked in the finding\'s "evidence" field (one sentence, internal bookkeeping — it is not shown to the user). Omit "evidence" for judgment-only findings.',
-    '- files: the exact file names involved as listed below (e.g. feedback_foo.md, MEMORY.md, or a skill name like my-skill).',
+    '- files: the exact file names involved as listed below (e.g. feedback_foo.md, MEMORY.md, or a skill name like my-skill). Bare names only — never append scope markers like "(user)"; scope is carried by the scope field.',
+    '- scope: "user" if the finding only cites the user-level CLAUDE.md (demote findings are always "user"); "cross" if it cites both the user-level file and any project-side file (override, shadow, and promote findings are "cross"); "project" for everything else.',
     '- suggestion: one actionable sentence (what to merge, delete, rewrite, or promote).',
     '- severity: high = actively harmful (contradictions, wrong guidance), med = wasted context or confusion, low = polish.',
     '- summary: 1-2 sentences on the overall health of this set.',
+    // The Sonnet orchestrator has been observed serializing findings as XML-ish text
+    // inside "summary" (failing schema validation), then "probing" with placeholder
+    // payloads until one passed — losing the real report. Spell the output contract out.
+    '- Final structured output: every finding goes as an object in the top-level "findings" array; "summary" is a short plain string. Never embed findings inside the summary text, never use XML-style tags in any field, and never submit placeholder or probe output (e.g. "Test", or a truncated findings list) just to pass validation. If your output is rejected for a schema mismatch, resubmit the SAME complete set of findings as valid JSON matching the schema — do not shrink, drop, or simplify it.',
     '',
-    'GLOBAL CLAUDE.md (reference only, do not audit it):',
-    '<<<',
-    userClaudeMd || '(none)',
-    '>>>',
-    '',
-  ];
+  );
+  if (userAudited) {
+    parts.push('USER CLAUDE.MD (audit this with claude-md-user-reviewer):', `=== FILE (user): ${userSrc.name} ===`, userSrc.content, '');
+  } else {
+    parts.push('GLOBAL CLAUDE.md (reference only, do not audit it):', '<<<', userSrc?.content || '(none)', '>>>', '');
+  }
   if (memSources.length) {
     parts.push('MEMORY FILES:');
     for (const s of memSources) {
@@ -897,8 +938,16 @@ const ANALYSIS_MODELS = new Set(['sonnet', 'opus', 'fable']);
 // agent's system prompt — the parent orchestrator only passes file name + content.
 const REVIEWER_COMMON = [
   'You review exactly one file that shapes Claude Code behavior; the parent passes its name and full content.',
-  'Verify before judging: for every claim that references the repository in your working directory — a file, directory, command, script, flag, or path — check whether it still holds with your read-only tools. Never call something "likely stale" when you can check it.',
+  'Verify before judging: for every claim that references the repository in your working directory — a file, directory, command, script, flag, or path — check whether it still holds with your read-only tools. For tools the file expects on the machine, check existence with `command -v` / `which` / `where` (the only Bash commands you may run). Never call something "likely stale" when you can check it.',
   'Also judge whether the content is still needed at all: if the thing it guards against is gone (the tool was removed, the convention is enforced elsewhere, the referenced file no longer exists), say so explicitly.',
+];
+
+// The user reviewer swaps repo verification for machine verification — the working
+// directory is an arbitrary project and must not influence a global-file audit.
+const REVIEWER_COMMON_USER = [
+  'You review the user-level (global) CLAUDE.md that loads in every session of every project; the parent passes its name and full content.',
+  'Verify before judging, against the machine only: check tools the file names with `command -v` / `which` / `where` (the only Bash commands you may run), and check files, skills, or agents it references under ~/.claude with your read tools. NEVER read or judge against the repository in your working directory — it is one arbitrary project and proves nothing about a global rule.',
+  'Also judge whether the content is still needed at all: if the tool it references is gone from the machine or the file it points to no longer exists, say so explicitly.',
 ];
 
 const REVIEWER_REPORT = [
@@ -907,11 +956,13 @@ const REVIEWER_REPORT = [
   '2. FINDINGS: candidate findings for this file only (kind: stale, invalidate, or quality; severity high/med/low; title; detail; one-sentence fix). An empty list is a valid answer — do not pad.',
 ];
 
-function reviewerAgent(description, rubric) {
+function reviewerAgent(description, rubric, common = REVIEWER_COMMON) {
   return {
     description,
-    prompt: [REVIEWER_COMMON.join('\n'), RUBRIC_CORE, rubric, REVIEWER_REPORT.join('\n')].join('\n\n'),
-    tools: ['Read', 'Grep', 'Glob'],
+    prompt: [common.join('\n'), RUBRIC_CORE, rubric, REVIEWER_REPORT.join('\n')].join('\n\n'),
+    // Bash is permission-scoped to command -v / which / where by the spawn's
+    // --allowedTools — anything else the reviewer tries is auto-denied in -p mode.
+    tools: ['Read', 'Grep', 'Glob', 'Bash'],
   };
 }
 
@@ -928,12 +979,22 @@ const ANALYSIS_AGENTS = {
     'Reviews and verifies one CLAUDE.md instruction file against the CLAUDE.md rubric and the repository. One per file, in parallel.',
     RUBRIC_CLAUDE_MD,
   ),
+  'claude-md-user-reviewer': reviewerAgent(
+    'Reviews and verifies the user-level (global) CLAUDE.md against the user rubric, PATH, and ~/.claude — never against the working repository.',
+    RUBRIC_CLAUDE_MD_USER,
+    REVIEWER_COMMON_USER,
+  ),
 };
+
+// Tool-existence checks are the only Bash the reviewers get; everything else
+// stays auto-denied by headless mode's default permissions.
+const ANALYSIS_ALLOWED_TOOLS = ['Bash(command -v:*)', 'Bash(which:*)', 'Bash(where:*)'];
 
 function runClaudeAnalysis(prompt, model, cwd) {
   return new Promise((resolve) => {
     const args = ['-p', '--output-format', 'json', '--json-schema', JSON.stringify(ANALYSIS_SCHEMA)];
     args.push('--agents', JSON.stringify(ANALYSIS_AGENTS));
+    args.push('--allowedTools', ...ANALYSIS_ALLOWED_TOOLS);
     if (model) args.push('--model', model);
     let child;
     try {
@@ -946,8 +1007,9 @@ function runClaudeAnalysis(prompt, model, cwd) {
     let out = '';
     let err = '';
     let done = false;
-    const finish = (r) => { if (done) return; done = true; clearTimeout(timer); resolve(r); };
-    const timer = setTimeout(() => { child.kill('SIGKILL'); finish({ ok: false, error: 'Claude Code timed out' }); }, ANALYZE_TIMEOUT_MS);
+    // No timeout: a long run is never killed — it runs until claude exits on its
+    // own. Past PENDING_STALL_MS the UI just shows it as stalled instead of spinning.
+    const finish = (r) => { if (done) return; done = true; resolve(r); };
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { err += d; });
     child.on('error', (e) => finish({ ok: false, error: `claude not found — is Claude Code installed? (${e.message})` }));
@@ -972,7 +1034,7 @@ function analyzableSources(stack) {
     (s) =>
       s.scope === 'memory' ||
       s.scope === 'agent-memory' ||
-      ((s.scope === 'skill' || CLAUDE_MD_SCOPES.has(s.scope)) && !s.parentId),
+      ((s.scope === 'skill' || s.scope === 'user' || CLAUDE_MD_SCOPES.has(s.scope)) && !s.parentId),
   );
 }
 
@@ -994,23 +1056,36 @@ function scopeDescription(selected) {
   const skl = n((s) => s.scope === 'skill');
   const agt = n((s) => s.scope === 'agent-memory');
   const cmd = n((s) => CLAUDE_MD_SCOPES.has(s.scope));
+  const usr = n((s) => s.scope === 'user');
   if (mem) parts.push(`${mem} memory`);
   if (skl) parts.push(`${skl} skill${skl === 1 ? '' : 's'}`);
   if (agt) parts.push(`${agt} agent`);
   if (cmd) parts.push(`${cmd} CLAUDE.md`);
+  if (usr) parts.push('user CLAUDE.md');
   return parts.join(' + ');
 }
 
 app.get('/api/memory/analysis', (_req, res) => {
   const st = getAnalysisState(currentProjectPath);
-  const running = st.pending.length > 0;
+  const running = st.pending.some((p) => !p.stalled);
+  // The shared user-scope entry rides along on every project's payload; its
+  // staleness tracks the user CLAUDE.md itself, independent of the project.
+  const us = getAnalysisState(USER_SCOPE);
   // Staleness needs a full stack scan + content hash — skip it while a run is in
   // flight (the client polls every 2.5s and stale is meaningless mid-run anyway).
   let stale = false;
-  if (!running && st.result) {
-    const selected = selectAnalysisSources(getStack(), st.ids);
-    const hash = selected.length ? memoryContentHash(selected) : null;
-    stale = st.hash !== hash;
+  let userStale = false;
+  if (!running && (st.result || us.result)) {
+    const stack = getStack();
+    if (st.result) {
+      const selected = selectAnalysisSources(stack, st.ids);
+      const hash = selected.length ? memoryContentHash(selected) : null;
+      stale = st.hash !== hash;
+    }
+    if (us.result) {
+      const userSrc = stack.find((s) => s.id === 'user-claude-md');
+      userStale = us.hash !== (userSrc ? memoryContentHash([userSrc]) : null);
+    }
   }
   res.json({
     pending: st.pending,
@@ -1021,22 +1096,31 @@ app.get('/api/memory/analysis', (_req, res) => {
     project: currentProjectPath,
     runs: st.runs || [],
     dismissed: st.dismissed || [],
+    user: { result: us.result, ts: us.ts, stale: userStale, runs: us.runs || [], dismissed: us.dismissed || [] },
   });
 });
 
+// scope:'user' targets the shared user-scope entry, so the action holds across
+// projects; anything else targets the current project's entry.
+function analysisTarget(req) {
+  return req.body?.scope === 'user' ? USER_SCOPE : currentProjectPath;
+}
+
 app.post('/api/memory/analysis/delete-run', (req, res) => {
-  const st = getAnalysisState(currentProjectPath);
+  const target = analysisTarget(req);
+  const st = getAnalysisState(target);
   const ts = req.body?.ts;
   const runs = (st.runs || []).filter((run) => run.ts !== ts);
   if (runs.length === (st.runs || []).length) return res.status(404).json({ error: 'run not found' });
-  saveAnalysisState(currentProjectPath, { ...st, error: null, runs });
+  saveAnalysisState(target, { ...st, error: null, runs });
   res.json({ ok: true, runs: runs.length });
 });
 
 // Dismissals persist per project so they survive reloads and re-runs.
 // Body: {key} adds, {all:true} clears.
 app.post('/api/memory/analysis/dismiss', (req, res) => {
-  const st = getAnalysisState(currentProjectPath);
+  const target = analysisTarget(req);
+  const st = getAnalysisState(target);
   const set = new Set(st.dismissed || []);
   if (req.body?.all) set.clear();
   else {
@@ -1044,7 +1128,7 @@ app.post('/api/memory/analysis/dismiss', (req, res) => {
     if (typeof key !== 'string' || !key) return res.status(400).json({ error: 'key required' });
     set.add(key);
   }
-  saveAnalysisState(currentProjectPath, { ...st, dismissed: [...set] });
+  saveAnalysisState(target, { ...st, dismissed: [...set] });
   res.json({ ok: true, dismissed: [...set] });
 });
 
@@ -1055,37 +1139,72 @@ app.post('/api/memory/analyze', (req, res) => {
   const selected = selectAnalysisSources(stack, ids);
   if (!selected.length) return res.status(404).json({ error: 'nothing to analyze for this scope' });
   const hash = memoryContentHash(selected);
-  if (!req.body?.force && prev.result && prev.hash === hash) {
+  // The user CLAUDE.md is audited when picked; otherwise it stays reference
+  // context for the 'promote' kind.
+  const userSelected = selected.find((s) => s.scope === 'user');
+  // A user-only run's result lives in the shared user-scope entry, so that is
+  // where its cache hit must be checked.
+  const userOnly = !!userSelected && selected.length === 1;
+  const cacheEntry = userOnly ? getAnalysisState(USER_SCOPE) : prev;
+  if (!req.body?.force && cacheEntry.result && cacheEntry.hash === hash) {
     return res.json({ cached: true });
   }
   const memSources = selected.filter((s) => s.scope === 'memory');
   const skills = selected.filter((s) => s.scope === 'skill');
   const agentSources = selected.filter((s) => s.scope === 'agent-memory');
   const claudeMdSources = selected.filter((s) => CLAUDE_MD_SCOPES.has(s.scope));
-  // The global CLAUDE.md is reference context for the 'promote' kind (never audited itself).
-  const userClaudeMd = stack.find((s) => s.id === 'user-claude-md');
-  const prompt = buildAnalyzePrompt(memSources, userClaudeMd?.content, skills, agentSources, claudeMdSources);
+  const userSrc = userSelected || stack.find((s) => s.id === 'user-claude-md');
+  const prompt = buildAnalyzePrompt(memSources, skills, agentSources, claudeMdSources, userSrc, !!userSelected);
   const stateIds = Array.isArray(ids) && ids.length ? ids : null;
   const model = ANALYSIS_MODELS.has(req.body?.model) ? req.body.model : null;
   // Capture the project now — the user may switch projects while the run is in flight,
   // and the result must land under the project it was computed for.
   const project = currentProjectPath;
   const runId = crypto.randomUUID();
+  const scopeDesc = scopeDescription(selected);
   saveAnalysisState(project, {
     ...prev,
-    pending: [...prev.pending, { id: runId, startedAt: Date.now(), model, scopeDesc: scopeDescription(selected) }],
+    // Starting a fresh run retires stalled leftovers — the user has moved on.
+    pending: [...prev.pending.filter((p) => !p.stalled), { id: runId, startedAt: Date.now(), model, scopeDesc }],
   });
-  runClaudeAnalysis(prompt, model, project).then((r) => {
+  const userHash = userSelected ? memoryContentHash([userSelected]) : null;
+  // Snapshot the audited files into the run — the stack changes over time, so
+  // historical runs must not re-derive their scope from the live stack. The user
+  // file is owned by the user-scope entry's snapshot, not the project's.
+  // Snapshotting up front also keeps `selected` (full file contents) out of the
+  // completion closure, which can live for hours on a run that never returns.
+  const audited = selected.filter((s) => s.scope !== 'user').map((s) => ({ id: s.id, name: s.name, scope: s.scope, lines: s.lines }));
+  const userAudited = userSelected ? [{ id: userSelected.id, name: userSelected.name, scope: 'user', lines: userSelected.lines }] : null;
+  const userId = userSelected?.id || null;
+  // Prepend a run to an entry's history, newest first, capped.
+  const withRun = (cur, run) => [run, ...(cur.runs || [])].slice(0, MAX_ANALYSIS_RUNS);
+  runClaudeAnalysis(prompt, model, userOnly ? os.homedir() : project).then((r) => {
     const ts = Date.now();
-    const result = r.ok ? { ...r.data, costUsd: r.costUsd, durationMs: r.durationMs, scopeDesc: scopeDescription(selected), model } : null;
+    let result = r.ok ? { ...r.data, costUsd: r.costUsd, durationMs: r.durationMs, scopeDesc, model } : null;
+    if (result) {
+      // Reviewers sometimes copy the prompt's scope marker into file names
+      // ("CLAUDE.md (user)") — canonicalize before persisting so no consumer sees it.
+      const findings = (result.findings || []).map((f) => ({ ...f, files: (f.files || []).map((n) => n.replace(/\s*\((user|project|local)\)$/, '')) }));
+      result = { ...result, findings };
+    }
+    // Findings about the user CLAUDE.md alone are shared across projects: split them
+    // into the user-scope entry; project and cross findings stay with the project.
+    if (result && userId) {
+      const all = result.findings;
+      const uCur = getAnalysisState(USER_SCOPE);
+      const uRun = {
+        result: { ...result, findings: all.filter((f) => f.scope === 'user'), scopeDesc: 'user CLAUDE.md' },
+        ts,
+        hash: userHash,
+        ids: [userId],
+        audited: userAudited,
+      };
+      saveAnalysisState(USER_SCOPE, { ...uCur, runs: withRun(uCur, uRun) });
+      result = { ...result, findings: all.filter((f) => f.scope !== 'user') };
+    }
     // Re-read from disk — parallel runs or another instance may have finished meanwhile.
     const cur = getAnalysisState(project);
-    // Snapshot the audited files into the run — the stack changes over time, so
-    // historical runs must not re-derive their scope from the live stack.
-    const audited = selected.map((s) => ({ id: s.id, name: s.name, scope: s.scope, lines: s.lines }));
-    const runs = (result ? [{ result, ts, hash, ids: stateIds, audited }, ...(cur.runs || [])] : cur.runs || [])
-      .sort((a, b) => b.ts - a.ts)
-      .slice(0, MAX_ANALYSIS_RUNS);
+    const runs = result && !userOnly ? withRun(cur, { result, ts, hash, ids: stateIds, audited }) : cur.runs || [];
     saveAnalysisState(project, {
       ...cur,
       pending: cur.pending.filter((p) => p.id !== runId),
