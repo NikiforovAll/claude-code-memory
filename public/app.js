@@ -1055,11 +1055,7 @@ async function refreshAnalysis() {
     computeTreeHealth(st);
     renderTree();
     if (isNew && !healthViewOpen && selectedFileId) renderPreview();
-    const el = document.getElementById('analysisSection');
-    if (el) {
-      el.innerHTML = renderAnalysis(st);
-      applyScopeIndeterminate(el);
-    }
+    rerenderAnalysis(st);
   }
   lastPollKey = pollKey;
   clearTimeout(analysisPollTimer);
@@ -1072,11 +1068,16 @@ async function refreshAnalysis() {
 
 // Re-render from the cached state — used by scope/filter/dismiss handlers so a
 // checkbox click never triggers a server round-trip.
-function rerenderAnalysis() {
+function rerenderAnalysis(st = lastAnalysisSt) {
   const el = document.getElementById('analysisSection');
-  if (!el || !lastAnalysisSt) return;
-  el.innerHTML = renderAnalysis(lastAnalysisSt);
+  if (!el || !st) return;
+  // The scope tree is the scroll container; innerHTML replaces it, which would
+  // snap a group toggle deep in the list back to the top of the panel.
+  const scroll = el.querySelector('.scope-tree')?.scrollTop || 0;
+  el.innerHTML = renderAnalysis(st);
   applyScopeIndeterminate(el);
+  const tree = el.querySelector('.scope-tree');
+  if (tree) tree.scrollTop = scroll;
 }
 
 // `indeterminate` is a DOM property, not an attribute — set it after every innerHTML render.
