@@ -850,6 +850,25 @@ const RUBRIC_CLAUDE_MD_USER = [
   '- Preferences should carry their why: a bare prohibition gets overridden when inconvenient; a one-clause reason makes it generalize.',
 ].join('\n');
 
+// The server already knows every `@import` a file makes: parseImports() carries the
+// grammar (npm scopes excluded, extension required) and resolveImport() the resolution
+// (~ = home, else relative to the importing file). Handing the reviewer that answer as
+// fact beats shipping it a prose reimplementation it would run differently each time.
+// Hard `@` imports only — markdown links are references, not inlined content.
+function importLines(src) {
+  const lines = [`PATH: ${src.path}`];
+  const resolved = [];
+  const missing = [];
+  for (const imp of parseImports(src.content).imports) {
+    const abs = resolveImport(imp, src.path);
+    if (fs.existsSync(abs)) resolved.push(abs);
+    else missing.push(`${imp} (tried ${abs})`);
+  }
+  if (resolved.length) lines.push(`IMPORTS: ${resolved.join(', ')}`);
+  if (missing.length) lines.push(`MISSING IMPORTS: ${missing.join(', ')}`);
+  return lines;
+}
+
 function buildAnalyzePrompt(memSources, skillSources, agentSources, claudeMdSources, userSrc, userAudited) {
   const fullSkills = skillSources || [];
   const fullAgent = agentSources || [];
@@ -885,8 +904,9 @@ function buildAnalyzePrompt(memSources, skillSources, agentSources, claudeMdSour
   parts.push(
     '',
     'Rules:',
-    `- You are the orchestrator; do not review files yourself. Your working directory is the project root. For every audited file, launch the type-matched reviewer subagent via your Agent tool — "memory-reviewer" for memory and agent-memory files, "skill-reviewer" for skills, "claude-md-reviewer" for project CLAUDE.md files${userAudited ? ', "claude-md-user-reviewer" for the user-level CLAUDE.md' : ''} — all in a single parallel batch of blocking calls (never background/async agents — you must hold your final report until every reviewer has returned). Pass each one only the file name and its full content; the reviewers carry their own criteria and verify claims against the repo${userAudited ? ' (the user-level reviewer verifies against the machine, never the repo)' : ''}.`,
+    `- You are the orchestrator; do not review files yourself. Your working directory is the project root. For every audited file, launch the type-matched reviewer subagent via your Agent tool — "memory-reviewer" for memory and agent-memory files, "skill-reviewer" for skills, "claude-md-reviewer" for project CLAUDE.md files${userAudited ? ', "claude-md-user-reviewer" for the user-level CLAUDE.md' : ''} — all in a single parallel batch of blocking calls (never background/async agents — you must hold your final report until every reviewer has returned). Pass each one only the file name, its full content, and — for skills and CLAUDE.md files — the PATH:, IMPORTS:, and MISSING IMPORTS: lines from its block below; the reviewers carry their own criteria and verify claims against the repo${userAudited ? ' (the user-level reviewer verifies against the machine, never the repo)' : ''}.`,
     `- Your own job: merge the reviewers' per-file findings and add the cross-file kinds (duplicate, contradiction, merge, promote${crossScope ? ', override, shadow' : ''}) by comparing the files side by side.`,
+    '- @imports are inlined content: the files on a block\'s IMPORTS: line load as part of that file. Reviewers read them, so treat what they report from an import as belonging to the importing file when you compare files side by side — a rule imported by one file and written out in another is still a duplicate. Imported files are never audited on their own; attribute every finding to the importer.',
     '- Verification is a filter: drop any finding a reviewer\'s claim checks disproved, and never report "likely outdated" for a claim a reviewer confirmed still HOLDS. Record what was checked in the finding\'s "evidence" field (one sentence, internal bookkeeping — it is not shown to the user). Omit "evidence" for judgment-only findings.',
     '- files: the exact file names involved as listed below (e.g. feedback_foo.md, MEMORY.md, or a skill name like my-skill). Bare names only — never append scope markers like "(user)"; scope is carried by the scope field.',
     '- scope: "user" if the finding only cites the user-level CLAUDE.md (demote findings are always "user"); "cross" if it cites both the user-level file and any project-side file (override, shadow, and promote findings are "cross"); "project" for everything else.',
@@ -900,9 +920,12 @@ function buildAnalyzePrompt(memSources, skillSources, agentSources, claudeMdSour
     '',
   );
   if (userAudited) {
-    parts.push('USER CLAUDE.MD (audit this with claude-md-user-reviewer):', `=== FILE (user): ${userSrc.name} ===`, userSrc.content, '');
+    parts.push('USER CLAUDE.MD (audit this with claude-md-user-reviewer):', `=== FILE (user): ${userSrc.name} ===`, ...importLines(userSrc), userSrc.content, '');
   } else {
-    parts.push('GLOBAL CLAUDE.md (reference only, do not audit it):', '<<<', userSrc?.content || '(none)', '>>>', '');
+    parts.push(
+      'GLOBAL CLAUDE.md (reference only, do not audit it):',
+      ...(userSrc ? importLines(userSrc).slice(1).map((l) => `${l} — inlined into the global file; read these before judging a rule missing from it`) : []),
+      '<<<', userSrc?.content || '(none)', '>>>', '');
   }
   if (memSources.length) {
     parts.push('MEMORY FILES:');
@@ -913,7 +936,7 @@ function buildAnalyzePrompt(memSources, skillSources, agentSources, claudeMdSour
   if (fullSkills.length) {
     parts.push('PROJECT SKILLS (audit these):');
     for (const s of fullSkills) {
-      parts.push(`=== SKILL: ${s.name} ===`, s.content, '');
+      parts.push(`=== SKILL: ${s.name} ===`, ...importLines(s), s.content, '');
     }
   }
   if (fullAgent.length) {
@@ -925,7 +948,7 @@ function buildAnalyzePrompt(memSources, skillSources, agentSources, claudeMdSour
   if (fullClaudeMd.length) {
     parts.push('CLAUDE.MD FILES (audit these):');
     for (const s of fullClaudeMd) {
-      parts.push(`=== FILE (${s.scope}): ${s.name} ===`, s.content, '');
+      parts.push(`=== FILE (${s.scope}): ${s.name} ===`, ...importLines(s), s.content, '');
     }
   }
   return parts.join('\n');
@@ -958,10 +981,24 @@ const REVIEWER_REPORT = [
   '2. FINDINGS: candidate findings for this file only (kind: stale, invalidate, or quality; severity high/med/low; title; detail; one-sentence fix). An empty list is a valid answer — do not pad.',
 ];
 
+// `@path/to/file.md` in a CLAUDE.md or a skill is an import: Claude Code inlines the
+// target's content where the token sits. A reviewer that judges only the text in front
+// of it reads an import as a dangling reference and never sees the rules the file
+// actually loads. `importLines()` resolves the graph server-side and states it as fact,
+// so the rubric only has to say what an import means. Memory files are excluded: the
+// imports they make are audited as sources in their own right.
+const RUBRIC_IMPORTS = [
+  'Import notation (@path):',
+  '- The IMPORTS: line of your file block lists absolute paths Claude Code inlines into this file at load time. Read each one and judge its content against every criterion above as part of this file — including imports of imports. Duplication between the file and its own import, contradictions across its imports, and bloat pulled in through an import all count against the importing file.',
+  '- An @path token is an import, never a broken link or an unexplained reference: do not flag the pointer itself as vague or undefined. Anything on the MISSING IMPORTS: line resolves to nothing, and is the only missing-import finding to report (kind: stale).',
+].join('\n');
+
+// `rubric` takes one rubric constant or a list of them, so a reviewer can stack the
+// shared import rubric on top of its per-type one without a second parameter.
 function reviewerAgent(description, rubric, common = REVIEWER_COMMON) {
   return {
     description,
-    prompt: [common.join('\n'), RUBRIC_CORE, rubric, REVIEWER_REPORT.join('\n')].join('\n\n'),
+    prompt: [common.join('\n'), RUBRIC_CORE, ...[].concat(rubric), REVIEWER_REPORT.join('\n')].join('\n\n'),
     // Bash is permission-scoped to command -v / which / where by the spawn's
     // --allowedTools — anything else the reviewer tries is auto-denied in -p mode.
     tools: ['Read', 'Grep', 'Glob', 'Bash'],
@@ -975,15 +1012,15 @@ const ANALYSIS_AGENTS = {
   ),
   'skill-reviewer': reviewerAgent(
     'Reviews and verifies one SKILL.md file against the skill rubric and the repository. One per skill, in parallel.',
-    RUBRIC_SKILL,
+    [RUBRIC_SKILL, RUBRIC_IMPORTS],
   ),
   'claude-md-reviewer': reviewerAgent(
     'Reviews and verifies one CLAUDE.md instruction file against the CLAUDE.md rubric and the repository. One per file, in parallel.',
-    RUBRIC_CLAUDE_MD,
+    [RUBRIC_CLAUDE_MD, RUBRIC_IMPORTS],
   ),
   'claude-md-user-reviewer': reviewerAgent(
     'Reviews and verifies the user-level (global) CLAUDE.md against the user rubric, PATH, and ~/.claude — never against the working repository.',
-    RUBRIC_CLAUDE_MD_USER,
+    [RUBRIC_CLAUDE_MD_USER, RUBRIC_IMPORTS],
     REVIEWER_COMMON_USER,
   ),
 };
