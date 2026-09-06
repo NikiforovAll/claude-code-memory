@@ -805,6 +805,24 @@ body.light .tree-conditional .file-name {
   max-height: 80vh;
   overflow-y: auto;
 }
+/* The paired shortcut columns need room the 440px default cannot give. */
+.modal.modal-help {
+  width: 960px;
+}
+/* Matches the roomier help modals in the other hub apps: larger title, 24px gutters. */
+.modal-help .modal-header {
+  padding: 20px 24px;
+}
+.modal-help .modal-header h3 {
+  font-family: var(--font-mono);
+  font-size: 18px;
+}
+.modal-help .modal-body {
+  padding: 24px;
+}
+.modal-help .modal-desc {
+  font-size: 13px;
+}
 .modal.modal-wide {
   width: 1140px;
 }
@@ -878,21 +896,6 @@ body.light .tree-conditional .file-name {
   border-top: 1px solid var(--border);
   margin: 12px 0;
 }
-.modal-close-btn {
-  display: block;
-  width: calc(100% - 32px);
-  margin: 0 16px 16px;
-  padding: 8px;
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 12px;
-}
-.modal-close-btn:hover {
-  background: var(--bg-hover);
-}
 /* matches the marketplace app's action-btn look */
 .action-btn {
   padding: 4px 10px;
@@ -961,19 +964,90 @@ body.light .tree-conditional .file-name {
   margin-bottom: 6px;
   text-transform: uppercase;
 }
-.shortcut-grid {
+/* One shared grid for both halves (key | label | spacer | key | label): each key
+   gutter is sized by its column's widest combo, and left/right rows share row
+   tracks, so paired groups line up — a shorter group just leaves empty rows.
+   Cells opt into a half via sc-l / sc-r; the markup is generated from
+   SHORTCUT_PAIRS in app.js. */
+.shortcuts {
+  margin: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
+  grid-template-columns: max-content 1fr 28px max-content 1fr;
+  column-gap: 14px;
 }
-.shortcut-table {
-  font-size: 12px;
+.shortcuts dt.sc-l {
+  grid-column: 1;
 }
-.shortcut-table td {
-  padding: 2px 0;
+.shortcuts dd.sc-l {
+  grid-column: 2;
 }
-.shortcut-table td:first-child {
-  padding-right: 12px;
+.shortcuts dt.sc-r {
+  grid-column: 4;
+}
+.shortcuts dd.sc-r {
+  grid-column: 5;
+}
+.shortcuts .sc-group.sc-l {
+  grid-column: 1 / 3;
+}
+.shortcuts .sc-group.sc-r {
+  grid-column: 4 / 6;
+}
+.shortcuts dt {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  align-self: center;
+  gap: 4px;
+  padding: 3px 0;
+}
+.shortcuts dd {
+  margin: 0;
+  /* The other hub apps set a mono body font; memory is sans, so the help rows
+     opt into mono to keep the shortcut tables reading the same across apps. */
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--text-secondary);
+  align-self: center;
+  padding: 3px 0;
+}
+/* Section headings carry the column: full-width rule + primary ink, so the eye
+   finds the group before it reads any single row. */
+.shortcuts .sc-group {
+  padding: 18px 0 6px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+}
+.shortcuts .sc-group.sc-first {
+  padding-top: 2px;
+}
+/* keycap chips: thicker bottom border reads as a key */
+.shortcuts kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  box-sizing: border-box;
+  color: var(--text-primary);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}
+.shortcuts .sc-plus,
+.shortcuts .sc-or {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+/* Hub keys do nothing outside Claude Code Hub, so the standalone app hides that
+   whole column rather than listing keys that no-op. */
+.shortcuts.sc-standalone .sc-hub {
+  display: none;
 }
 kbd {
   background: var(--bg-hover);
@@ -1131,8 +1205,12 @@ body.light {
   .summary-bar {
     flex-wrap: wrap;
   }
-  .shortcut-grid {
-    grid-template-columns: 1fr;
+  /* Rows are interleaved left-then-right, so a one-column stack would read out
+     of order. Keep both halves and just tighten the gutters. */
+  .shortcuts {
+    grid-template-columns: max-content 1fr 12px max-content 1fr;
+    column-gap: 8px;
+    font-size: 11px;
   }
 }
 /* #endregion RESPONSIVE */

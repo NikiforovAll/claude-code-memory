@@ -301,7 +301,80 @@ function closeModal(id) {
   document.getElementById(id).classList.remove('open');
 }
 
+// Each entry pairs a left and a right group onto the same grid rows, so their
+// headings sit level and the shorter group just leaves empty rows.
+// `combo` joins the keys with a plus (a chord) instead of listing them as
+// alternatives; `hub` marks rows that only work inside Claude Code Hub.
+const SHORTCUT_PAIRS = [
+  [
+    {
+      title: 'Navigate',
+      rows: [
+        { keys: ['j', '↓'], label: 'Next item' },
+        { keys: ['k', '↑'], label: 'Previous item' },
+        { keys: ['l', '→'], label: 'Expand / enter child' },
+        { keys: ['h', '←'], label: 'Collapse / parent' },
+        { keys: ['Enter'], label: 'Select item' },
+        { keys: ['Esc'], label: 'Close modal' },
+      ],
+    },
+    {
+      title: 'Actions',
+      rows: [
+        { keys: ['e'], label: 'Open in editor' },
+        { keys: ['r'], label: 'Refresh data' },
+        { keys: ['t'], label: 'Toggle theme' },
+        { keys: ['Shift', 'P'], combo: true, label: 'Switch project' },
+        { keys: ['?'], label: 'Show this help' },
+      ],
+    },
+  ],
+  [
+    {
+      title: 'Hub',
+      hub: true,
+      rows: [
+        { keys: ['Ctrl', 'Alt', '←/→'], combo: true, label: 'Previous / next hub app' },
+        { keys: ['Alt', '1…9'], combo: true, label: 'Jump to hub app by number' },
+        { keys: ['Ctrl', 'Alt', 'P'], combo: true, label: 'Project picker' },
+      ],
+    },
+  ],
+];
+
+const EMPTY_GROUP = { title: '', rows: [] };
+
+// Interleaves each pair's rows left-then-right so CSS grid auto-placement lands
+// them on shared row tracks (see .shortcuts in style.css).
+function buildHelpShortcuts() {
+  const cells = [];
+  SHORTCUT_PAIRS.forEach(([left, right = EMPTY_GROUP], pair) => {
+    const first = pair === 0 ? ' sc-first' : '';
+    const sides = [
+      [left, 'sc-l'],
+      [right, 'sc-r'],
+    ];
+    const head = (g, side) =>
+      g.title ? `<div class="${esc(`sc-group ${side}${first}${g.hub ? ' sc-hub' : ''}`)}">${g.title}</div>` : '';
+    cells.push(sides.map(([g, side]) => head(g, side)).join(''));
+    for (let i = 0; i < Math.max(left.rows.length, right.rows.length); i++) {
+      for (const [group, side] of sides) {
+        const row = group.rows[i];
+        if (!row) continue;
+        const sep = row.combo ? '<span class="sc-plus">+</span>' : '<span class="sc-or">/</span>';
+        const keys = row.keys.map((k) => `<kbd>${esc(k)}</kbd>`).join(sep);
+        const cls = side + (group.hub ? ' sc-hub' : '');
+        cells.push(`<dt class="${esc(cls)}">${keys}</dt><dd class="${esc(cls)}">${esc(row.label)}</dd>`);
+      }
+    }
+  });
+  return cells.join('');
+}
+
 function toggleHelpModal() {
+  const list = document.getElementById('helpShortcuts');
+  if (!list.childElementCount) list.innerHTML = buildHelpShortcuts();
+  list.classList.toggle('sc-standalone', !window.__HUB__?.enabled);
   document.getElementById('helpModal').classList.toggle('open');
 }
 
@@ -1911,7 +1984,7 @@ document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
   const modal = document.querySelector('.modal-overlay.open');
   if (modal) {
-    if (e.key === 'Escape') {
+    if (e.key === 'Escape' || (e.key === '?' && modal.id === 'helpModal')) {
       modal.classList.remove('open');
       e.preventDefault();
     }
