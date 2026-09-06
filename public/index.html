@@ -100,15 +100,21 @@
         <button class="modal-close" onclick="closeModal('projectPickerModal')">&#10005;</button>
       </div>
       <div class="modal-body">
-        <div class="modal-field">
-          <label>Project directory</label>
-          <input type="text" id="projectPathInput" placeholder="/path/to/project" autocomplete="off">
-          <span class="modal-hint">Full path to the project directory</span>
+        <div class="picker-filter" id="projectPickerFilter">
+          <input type="text" id="projectPickerInput" class="picker-input" placeholder="Filter projects..." autocomplete="off">
+          <div class="picker-list" id="projectPickerList"></div>
+          <button class="picker-add" id="projectPickerAdd">+ Add path...</button>
         </div>
-        <div id="recentProjectsList"></div>
-        <div class="modal-actions">
-          <button class="action-btn" onclick="closeModal('projectPickerModal')">Cancel</button>
-          <button class="action-btn primary" id="projectPickerSubmit" onclick="submitProjectPicker()">Switch</button>
+        <div class="picker-add-form" id="projectPickerAddForm" hidden>
+          <div class="modal-field">
+            <label>Project directory</label>
+            <input type="text" id="projectPathInput" placeholder="/path/to/project" autocomplete="off">
+            <span class="modal-hint">Full path to the project directory</span>
+          </div>
+          <div class="modal-actions">
+            <button class="action-btn" id="projectPickerBack">Back</button>
+            <button class="action-btn primary" id="projectPickerSubmit" onclick="submitProjectPicker()">Switch</button>
+          </div>
         </div>
       </div>
     </div>

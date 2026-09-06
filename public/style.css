@@ -1063,31 +1063,77 @@ kbd {
   font-size: 10px;
   line-height: 1;
 }
-.recent-projects-label {
-  font-size: 11px;
-  color: var(--text-muted);
-  margin: 10px 0 4px;
-}
-.recent-project-item {
+.picker-filter,
+.picker-add-form {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+}
+.picker-filter[hidden],
+.picker-add-form[hidden] {
+  display: none;
+}
+.picker-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+.picker-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.picker-list {
+  max-height: 50vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   padding: 5px 8px;
+  border: 1px solid transparent;
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
   font-family: var(--font-mono);
   color: var(--text-secondary);
 }
-.recent-project-item:hover {
+.picker-row:hover {
   background: var(--bg-hover);
+  color: var(--text-primary);
 }
-.recent-project-item span {
+.picker-row.selected {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.picker-name {
+  white-space: nowrap;
+}
+.picker-parent {
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-muted);
 }
-.recent-project-remove {
+.picker-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent-text);
+}
+.picker-remove {
   background: none;
   border: none;
   color: var(--text-muted);
@@ -1096,8 +1142,32 @@ kbd {
   padding: 0 4px;
   opacity: 0;
 }
-.recent-project-item:hover .recent-project-remove {
+.picker-row:hover .picker-remove,
+.picker-row.selected .picker-remove {
   opacity: 1;
+}
+.picker-remove:hover {
+  color: var(--error);
+}
+.picker-empty {
+  padding: 12px 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.picker-add {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--border);
+  padding: 8px 2px 2px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.picker-add:hover {
+  color: var(--accent-text);
 }
 /* #endregion MODAL */
 

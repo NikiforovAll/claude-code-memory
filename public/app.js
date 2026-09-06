@@ -221,11 +221,10 @@ async function putProject(dirPath) {
 }
 
 function changeProject() {
-  const current = document.getElementById('projectBtn').title;
-  document.getElementById('projectPathInput').value = current;
-  renderRecentProjects();
+  document.getElementById('projectPickerInput').value = '';
+  renderProjectPicker();
   document.getElementById('projectPickerModal').classList.add('open');
-  setTimeout(() => document.getElementById('projectPathInput').focus(), 100);
+  setPickerMode(false);
 }
 
 async function submitProjectPicker() {
@@ -248,6 +247,8 @@ async function submitProjectPicker() {
   }
 }
 
+const RECENT_PROJECTS_MAX = 20;
+
 function getRecentProjects() {
   try {
     return JSON.parse(localStorage.getItem('recentProjects') || '[]');
@@ -259,38 +260,102 @@ function getRecentProjects() {
 function addRecentProject(p) {
   const recent = getRecentProjects().filter((r) => r !== p);
   recent.unshift(p);
-  localStorage.setItem('recentProjects', JSON.stringify(recent.slice(0, 10)));
+  localStorage.setItem('recentProjects', JSON.stringify(recent.slice(0, RECENT_PROJECTS_MAX)));
 }
 
-function _removeRecentProject(p, e) {
-  e.stopPropagation();
-  const recent = getRecentProjects().filter((r) => r !== p);
-  localStorage.setItem('recentProjects', JSON.stringify(recent));
-  renderRecentProjects();
+// The recents list is the switcher; typing a path is the secondary act behind "+ Add path".
+let pickerRows = [];
+let pickerIdx = -1;
+
+function setPickerMode(add) {
+  document.getElementById('projectPickerFilter').hidden = add;
+  document.getElementById('projectPickerAddForm').hidden = !add;
+  const input = document.getElementById(add ? 'projectPathInput' : 'projectPickerInput');
+  if (add) input.value = document.getElementById('projectBtn').title;
+  // The overlay fades in, so a focus() on a field that is still hidden is dropped.
+  setTimeout(() => input.focus(), 100);
 }
 
-function _selectRecentProject(p) {
-  document.getElementById('projectPathInput').value = p;
+function splitProjectPath(p) {
+  const trimmed = p.replace(/[/\\]+$/, '');
+  const cut = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return { name: trimmed.slice(cut + 1), parent: trimmed.slice(0, Math.max(cut, 0)) };
 }
 
-function renderRecentProjects() {
-  const container = document.getElementById('recentProjectsList');
+function renderProjectPicker() {
+  const list = document.getElementById('projectPickerList');
+  const q = document.getElementById('projectPickerInput').value.trim().toLowerCase();
+  const current = document.getElementById('projectBtn').title;
   const recent = getRecentProjects();
-  if (!recent.length) {
-    container.innerHTML = '';
+  pickerRows = q ? recent.filter((p) => p.toLowerCase().includes(q)) : recent;
+  if (!pickerRows.length) {
+    pickerIdx = -1;
+    const msg = recent.length ? 'No projects match' : 'No recent projects — add one below';
+    list.innerHTML = `<div class="picker-empty">${msg}</div>`;
     return;
   }
-  container.innerHTML =
-    '<div class="recent-projects-label">Recent</div>' +
-    recent
-      .map(
-        (p) =>
-          `<div class="recent-project-item" onclick="_selectRecentProject('${escAttrJs(p)}')">` +
-          `<span>${esc(p)}</span>` +
-          `<button class="recent-project-remove" onclick="_removeRecentProject('${escAttrJs(p)}', event)" title="Remove">&#10005;</button>` +
-          `</div>`,
-      )
-      .join('');
+  list.innerHTML = pickerRows
+    .map((p, i) => {
+      const { name, parent } = splitProjectPath(p);
+      const cur = p === current;
+      return `<div class="picker-row${cur ? ' current' : ''}" onclick="_pickProject(${i})" title="${esc(p)}">
+        <span class="picker-name">${esc(name)}</span>
+        <span class="picker-parent">${esc(parent)}</span>
+        ${cur ? '<span class="picker-tag">current</span>' : ''}
+        <button class="picker-remove" onclick="_removeRecentProject(${i}, event)" title="Remove">&#10005;</button>
+      </div>`;
+    })
+    .join('');
+  // Opens on the first row that would actually change something.
+  setPickerCursor(pickerRows.findIndex((p) => p !== current));
+}
+
+function setPickerCursor(idx) {
+  const list = document.getElementById('projectPickerList');
+  list.children[pickerIdx]?.classList.remove('selected');
+  pickerIdx = Math.min(Math.max(idx, 0), pickerRows.length - 1);
+  const row = list.children[pickerIdx];
+  row?.classList.add('selected');
+  row?.scrollIntoView({ block: 'nearest' });
+}
+
+function _pickProject(idx) {
+  const p = pickerRows[idx];
+  if (!p) return;
+  document.getElementById('projectPathInput').value = p;
+  submitProjectPicker();
+}
+
+function _removeRecentProject(idx, e) {
+  e.stopPropagation();
+  const target = pickerRows[idx];
+  if (!target) return;
+  localStorage.setItem('recentProjects', JSON.stringify(getRecentProjects().filter((p) => p !== target)));
+  renderProjectPicker();
+}
+
+function initProjectPicker() {
+  document.getElementById('projectPickerAdd').addEventListener('click', () => setPickerMode(true));
+  document.getElementById('projectPickerBack').addEventListener('click', () => setPickerMode(false));
+  const filter = document.getElementById('projectPickerInput');
+  filter.addEventListener('input', renderProjectPicker);
+  filter.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeModal('projectPickerModal');
+    else if (e.key === 'ArrowDown' || (e.key === 'n' && e.ctrlKey)) setPickerCursor(pickerIdx + 1);
+    else if (e.key === 'ArrowUp' || (e.key === 'p' && e.ctrlKey)) setPickerCursor(pickerIdx - 1);
+    else if (e.key === 'Enter') _pickProject(pickerIdx);
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  });
+  document.getElementById('projectPathInput').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitProjectPicker();
+    // Escape steps back to the list rather than closing — the list is where you came from.
+    else if (e.key === 'Escape') setPickerMode(false);
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  });
 }
 
 // #endregion PROJECT
@@ -383,19 +448,6 @@ function openHealthView() {
   document.getElementById('analyzeBtn')?.classList.toggle('active', healthViewOpen);
   renderPreview();
   if (healthViewOpen) refreshAnalysis();
-}
-
-function bindModalKeys(inputId, modalId, submitFn) {
-  document.getElementById(inputId).addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      submitFn();
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      closeModal(modalId);
-    }
-  });
 }
 
 // #endregion MODAL
@@ -2189,7 +2241,7 @@ window.addEventListener('popstate', (e) => {
 document.addEventListener('DOMContentLoaded', async () => {
   loadTheme();
   initResize();
-  bindModalKeys('projectPathInput', 'projectPickerModal', submitProjectPicker);
+  initProjectPicker();
   // Handle ?project= query param, else restore last-used project from localStorage
   const params = new URLSearchParams(location.search);
   let desiredProject = params.get('project');
