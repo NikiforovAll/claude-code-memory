@@ -1361,7 +1361,7 @@ function findingPrompt(f) {
   } else if (paths.length > 1) {
     header = 'In the Claude Code instruction files listed below, apply this fix:';
   } else if (f.scope === 'user') {
-    const path = stackData.find((s) => s.id === 'user-claude-md')?.path || '~/.claude/CLAUDE.md';
+    const path = stackData.find((s) => s.id === 'user-claude-md')?.path || summaryData.userClaudeMd;
     header = `In the user-level Claude Code instructions at ${path}, apply this fix:`;
   } else {
     const dir = memoryDirPath();
@@ -2098,9 +2098,9 @@ document.addEventListener('keydown', (e) => {
       e.preventDefault();
       fwd(e);
     }
-    // Its own branch: the Alt+digit case below requires !ctrlKey. P opens the hub's project
-    // palette, W its config-dir palette.
-    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && /^[pw]$/i.test(e.key)) {
+    // Own branch: the Alt+digit case below requires !ctrlKey. The hub owns the Ctrl+Alt+letter
+    // keymap and ignores unbound letters.
+    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && /^[a-z]$/i.test(e.key)) {
       e.preventDefault();
       fwd(e);
     }

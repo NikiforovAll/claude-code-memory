@@ -25,7 +25,13 @@ const expandHome = (p) => (typeof p === 'string' ? p : '').replace(/^~/, os.home
 const PORT = getArg('port') || process.env.PORT || 3544;
 const AUTO_OPEN = process.argv.includes('--open');
 const claudeDirArg = getArg('dir') || process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_DIR;
-const CLAUDE_DIR = claudeDirArg ? expandHome(claudeDirArg) : path.join(os.homedir(), '.claude');
+const DEFAULT_CLAUDE_DIR = path.join(os.homedir(), '.claude');
+const CLAUDE_DIR = claudeDirArg ? expandHome(claudeDirArg) : DEFAULT_CLAUDE_DIR;
+const USER_CLAUDE_MD = path.join(CLAUDE_DIR, 'CLAUDE.md');
+// Claude Code keeps .claude.json beside ~/.claude by default but inside CLAUDE_CONFIG_DIR
+// when that is set, so the default dir must stay unset for the CLI rather than be spelled out.
+const IS_DEFAULT_CLAUDE_DIR = path.resolve(CLAUDE_DIR) === path.resolve(DEFAULT_CLAUDE_DIR);
+const CLI_ENV = IS_DEFAULT_CLAUDE_DIR ? process.env : { ...process.env, CLAUDE_CONFIG_DIR: CLAUDE_DIR };
 const projectDirArg = getArg('project');
 
 // #endregion CLI_ARGS
@@ -233,8 +239,7 @@ function discoverMemorySources(projectPath) {
   }
 
   // 2. User CLAUDE.md
-  const userClaudeMd = path.join(CLAUDE_DIR, 'CLAUDE.md');
-  const userInfo = fileInfo(userClaudeMd);
+  const userInfo = fileInfo(USER_CLAUDE_MD);
   if (userInfo) {
     sources.push({
       id: 'user-claude-md',
@@ -843,7 +848,7 @@ const RUBRIC_CLAUDE_MD = [
 const RUBRIC_CLAUDE_MD_USER = [
   'User-level CLAUDE.md criteria (global instructions, loaded in every session of every project):',
   '- Universality: every rule must hold on any project. Flag rules referencing one specific repo, stack, tool chain, or project path — they belong in that project\'s CLAUDE.md (kind: demote).',
-  '- Machine verification only: check that tools the file names exist on PATH (command -v / which / where) and that files, skills, or agents it references exist under ~/.claude. NEVER verify against the working directory\'s repository — it is an arbitrary project and proves nothing about a global rule.',
+  `- Machine verification only: check that tools the file names exist on PATH (command -v / which / where) and that files, skills, or agents it references exist under ${CLAUDE_DIR}. NEVER verify against the working directory's repository — it is an arbitrary project and proves nothing about a global rule.`,
   '- Self-consistency: flag sections, tags, or mnemonics that contradict or duplicate each other within the file and its imports.',
   '- Executability: flag standards name-dropped without concrete behaviors ("follow style guide X") and rules the model cannot act on — require the 2-3 specific behaviors the user actually wants.',
   '- Flag emphasis inflation (all-caps, NEVER/ALWAYS without stakes) and vague or no-op rules the model cannot act on.',
@@ -970,7 +975,7 @@ const REVIEWER_COMMON = [
 // directory is an arbitrary project and must not influence a global-file audit.
 const REVIEWER_COMMON_USER = [
   'You review the user-level (global) CLAUDE.md that loads in every session of every project; the parent passes its name and full content.',
-  'Verify before judging, against the machine only: check tools the file names with `command -v` / `which` / `where` (the only Bash commands you may run), and check files, skills, or agents it references under ~/.claude with your read tools. NEVER read or judge against the repository in your working directory — it is one arbitrary project and proves nothing about a global rule.',
+  `Verify before judging, against the machine only: check tools the file names with \`command -v\` / \`which\` / \`where\` (the only Bash commands you may run), and check files, skills, or agents it references under ${CLAUDE_DIR} with your read tools. NEVER read or judge against the repository in your working directory — it is one arbitrary project and proves nothing about a global rule.`,
   'Also judge whether the content is still needed at all: if the tool it references is gone from the machine or the file it points to no longer exists, say so explicitly.',
   'A check you could not run is not evidence of absence. If a probe is denied by permissions or errors out, report that claim as UNCHECKED and say why — never turn a failed check into a stale or invalidate finding.',
 ];
@@ -1019,7 +1024,7 @@ const ANALYSIS_AGENTS = {
     [RUBRIC_CLAUDE_MD, RUBRIC_IMPORTS],
   ),
   'claude-md-user-reviewer': reviewerAgent(
-    'Reviews and verifies the user-level (global) CLAUDE.md against the user rubric, PATH, and ~/.claude — never against the working repository.',
+    `Reviews and verifies the user-level (global) CLAUDE.md against the user rubric, PATH, and ${CLAUDE_DIR} — never against the working repository.`,
     [RUBRIC_CLAUDE_MD_USER, RUBRIC_IMPORTS],
     REVIEWER_COMMON_USER,
   ),
@@ -1039,7 +1044,7 @@ function runClaudeAnalysis(prompt, model, cwd) {
     try {
       // cwd = the project root so the agent can verify claims against the actual
       // files with its read-only tools (Read/Glob/Grep need no permission grants).
-      child = spawn('claude', args, { cwd: cwd || os.tmpdir(), windowsHide: true });
+      child = spawn('claude', args, { cwd: cwd || os.tmpdir(), env: CLI_ENV, windowsHide: true });
     } catch (e) {
       return resolve({ ok: false, error: `Failed to spawn claude: ${e.message}` });
     }
@@ -1313,7 +1318,9 @@ app.get('/api/summary', (_req, res) => {
   for (const f of sources) scopeChars[f.scope] = (scopeChars[f.scope] || 0) + (f.chars || 0);
   const totalChars = sources.reduce((s, f) => s + (f.chars || 0), 0) + skillDesc.chars;
   // ids: which sources make up the footprint, so the client can highlight them
-  res.json({ totalFiles, totalLines, totalBytes, totalChars, scopeChars, skillDesc, alwaysLoaded, conditional, onDemand, ids: sources.map(s => s.id) });
+  // userClaudeMd: where the user-level file lives even when it does not exist yet, so the
+  // client can name it in fix prompts without assuming ~/.claude
+  res.json({ totalFiles, totalLines, totalBytes, totalChars, scopeChars, skillDesc, alwaysLoaded, conditional, onDemand, ids: sources.map(s => s.id), userClaudeMd: USER_CLAUDE_MD });
 });
 
 app.get('/api/stack', (_req, res) => {

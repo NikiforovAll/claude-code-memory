@@ -35,7 +35,7 @@ PORT=8080                Custom port (default: 3544, falls back if busy)
 --open                   Open browser on start
 ```
 
-The config dir can also be set via the `CLAUDE_CONFIG_DIR` environment variable. Switch projects at runtime with the picker (Shift+P) or `?project=/path`.
+The config dir can also be set via the `CLAUDE_CONFIG_DIR` environment variable; the analyzer's headless `claude` run inherits it. Switch projects at runtime with the picker (Shift+P) or `?project=/path`.
 
 ## License
 
