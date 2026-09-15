@@ -14,6 +14,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
 <link rel="manifest" href="/manifest.json">
 <link rel="icon" type="image/svg+xml" href="/icons/icon-svg.svg">
+<!-- Chrome uses the SVG only in the tab strip; app windows, shortcuts and the
+     history list need a raster icon or they fall back to /favicon.ico and then to
+     whatever icon localhost was last seen with, which is a sibling app's. -->
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="512x512" href="/icons/icon-512.png">
 <meta name="theme-color" content="#101114" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#e8e6e3" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
