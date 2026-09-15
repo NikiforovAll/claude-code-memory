@@ -4,7 +4,7 @@ let projectData = null;
 let stackData = [];
 let summaryData = null;
 let selectedFileId = null;
-let healthViewOpen = true; // health dashboard is the default view; selecting a file exits it
+let healthViewOpen = false; // opt-in view; the Analyze button toggles it, selecting a file exits it
 
 // #endregion STATE
 
