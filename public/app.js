@@ -2124,21 +2124,24 @@ document.addEventListener('keydown', (e) => {
     .catch(() => ({}));
   if (!cfg.enabled) return;
   window.__HUB__ = cfg;
-  const fwd = (e) => hubPost({ type: 'hub:keydown', key: e.key, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey });
+  // e.code travels with e.key because macOS composes Option+<key> into a character (Option+P is
+  // 'π'), so the key alone cannot identify the binding. The hub owns the keymap and normalizes;
+  // these tests only decide whether a press is the hub's to handle.
   document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+    const fwd = () => {
       e.preventDefault();
-      fwd(e);
+      hubPost({ type: 'hub:keydown', key: e.key, code: e.code, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey });
+    };
+    if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      fwd();
     }
     // Own branch: the Alt+digit case below requires !ctrlKey. The hub owns the Ctrl+Alt+letter
     // keymap and ignores unbound letters.
-    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && /^[a-z]$/i.test(e.key)) {
-      e.preventDefault();
-      fwd(e);
+    if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && (/^[a-z]$/i.test(e.key) || /^Key[A-Z]$/.test(e.code))) {
+      fwd();
     }
-    if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && /^[1-9]$/.test(e.key)) {
-      e.preventDefault();
-      fwd(e);
+    if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && (/^[1-9]$/.test(e.key) || /^Digit[1-9]$/.test(e.code))) {
+      fwd();
     }
   });
 })();
