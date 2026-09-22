@@ -622,7 +622,7 @@ app.get('/hub-config', (_req, res) => {
 });
 
 app.get('/api/project', (_req, res) => {
-  res.json({ path: currentProjectPath, name: path.basename(currentProjectPath) });
+  res.json({ path: currentProjectPath, name: path.basename(currentProjectPath), configDir: CLAUDE_DIR });
 });
 
 app.put('/api/project', (req, res) => {

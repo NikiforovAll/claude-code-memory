@@ -209,6 +209,8 @@ async function loadProject() {
 // Shared by the project picker, the boot restore, and the hub project shim. Throws with the
 // server's error message so callers can surface it directly.
 async function putProject(dirPath) {
+  // Recents can only be written under the right key once the config dir is known.
+  await projectInfoPromise;
   const res = await fetch('/api/project', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -248,10 +250,40 @@ async function submitProjectPicker() {
 }
 
 const RECENT_PROJECTS_MAX = 20;
+const LEGACY_RECENTS_KEY = 'recentProjects';
+
+// Under the hub every config dir's memory app is proxied on one public port, so localStorage is
+// shared between them. Recents are keyed by config dir to keep each one's project separate.
+let claudeConfigDir = '';
+// Retries like the initial load below: in a hub iframe the server may not answer yet.
+const projectInfoPromise = (async () => {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const info = await fetchJSON('/api/project');
+      claudeConfigDir = info.configDir || '';
+      migrateLegacyRecents();
+      return info;
+    } catch {
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+  return {};
+})();
+
+function recentsKey() {
+  return claudeConfigDir ? `${LEGACY_RECENTS_KEY}::${claudeConfigDir}` : LEGACY_RECENTS_KEY;
+}
+
+function migrateLegacyRecents() {
+  const legacy = localStorage.getItem(LEGACY_RECENTS_KEY);
+  if (!legacy || !claudeConfigDir) return;
+  if (!localStorage.getItem(recentsKey())) localStorage.setItem(recentsKey(), legacy);
+  localStorage.removeItem(LEGACY_RECENTS_KEY);
+}
 
 function getRecentProjects() {
   try {
-    return JSON.parse(localStorage.getItem('recentProjects') || '[]');
+    return JSON.parse(localStorage.getItem(recentsKey()) || '[]');
   } catch {
     return [];
   }
@@ -260,7 +292,7 @@ function getRecentProjects() {
 function addRecentProject(p) {
   const recent = getRecentProjects().filter((r) => r !== p);
   recent.unshift(p);
-  localStorage.setItem('recentProjects', JSON.stringify(recent.slice(0, RECENT_PROJECTS_MAX)));
+  localStorage.setItem(recentsKey(), JSON.stringify(recent.slice(0, RECENT_PROJECTS_MAX)));
 }
 
 // The recents list is the switcher; typing a path is the secondary act behind "+ Add path".
@@ -330,7 +362,7 @@ function _removeRecentProject(idx, e) {
   e.stopPropagation();
   const target = pickerRows[idx];
   if (!target) return;
-  localStorage.setItem('recentProjects', JSON.stringify(getRecentProjects().filter((p) => p !== target)));
+  localStorage.setItem(recentsKey(), JSON.stringify(getRecentProjects().filter((p) => p !== target)));
   renderProjectPicker();
 }
 
@@ -2248,6 +2280,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   let desiredProject = params.get('project');
   // A hub-pushed project outranks the localStorage recent: initHub() is fire-and-forget at script
   // eval, so hub:project can land before or during this block.
+  await projectInfoPromise;
   if (!desiredProject) desiredProject = hubProjectPath || getRecentProjects()[0] || null;
   if (desiredProject) {
     try {
