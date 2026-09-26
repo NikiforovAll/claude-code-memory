@@ -1,0 +1,67 @@
+---
+title: Run inside Claude Code Hub
+description: What changes when Claude Code Memory Diagnoser runs as a tab in Claude Code Hub.
+---
+
+import Shot from '../../../kit/Shot.astro';
+import Lightbox from '../../../kit/Lightbox.astro';
+
+Claude Code Hub shows Claude Code Memory Diagnoser as one of its tabs. The app works the same as it does standalone. This page lists the changes.
+
+<Shot themed="h3-hub-memory" alt="Claude Code Memory Diagnoser open as a tab in Claude Code Hub, with the memory tree on the left and a CLAUDE.md file on the right" />
+
+## How the hub starts the app
+
+The hub starts the app as a child process and sets these environment variables:
+
+- `CLAUDE_HUB=1` turns on hub integration.
+- `HUB_URL` gives the hub address.
+- `CLAUDE_CONFIG_DIR` gives the hub's active config dir.
+
+The app reads them at startup. `GET /hub-config` then returns `enabled: true` and the hub URL. The browser code reads this endpoint and turns on the hub features below only when `enabled` is true.
+
+## Project sync
+
+Press <kbd>Ctrl+Alt+P</kbd> to open the hub project picker. The project you pick there goes to every hub tab. Claude Code Memory Diagnoser switches to it and adds it to the top of its recent projects list.
+
+On page load, the app picks the project in this order:
+
+1. A `?project=` query parameter in the URL.
+2. The project that the hub sent.
+3. The most recent project saved in the browser.
+
+If the hub sends a project while the page is loading, the hub project is used.
+
+You can still use the in-app picker (the folder button in the top bar, or <kbd>Shift+P</kbd>). The next project that the hub sends replaces your choice.
+
+## Theme sync
+
+The light/dark mode and the color theme stay the same in the hub and in the app, in both directions. If you change the theme in the app, the app sends a `hub:theme` message to the hub. If the hub sends `hub:theme`, the app applies it.
+
+## Forwarded keys
+
+A browser does not pass key presses from an iframe to the page that contains it. So the app sends these keys to the hub:
+
+- <kbd>Ctrl+Alt+Left</kbd> and <kbd>Ctrl+Alt+Right</kbd> go to the previous or next hub app.
+- <kbd>Ctrl+Alt+Letter</kbd> goes to the hub. The hub binds <kbd>Ctrl+Alt+P</kbd> (project picker) and <kbd>Ctrl+Alt+W</kbd> (config dir picker) and ignores letters it does not bind.
+- <kbd>Alt+1</kbd> to <kbd>Alt+9</kbd> jump to a hub app by number.
+
+The app does not forward <kbd>Ctrl+Alt+Letter</kbd> or <kbd>Alt+1</kbd> to <kbd>Alt+9</kbd> if the press also includes <kbd>Shift</kbd> or <kbd>Meta</kbd>. The tree navigation keys do nothing while <kbd>Ctrl</kbd> or <kbd>Alt</kbd> is held, so a hub app switch does not also move the tree selection.
+
+The help overlay (<kbd>?</kbd>) shows a Hub group with the app switch keys and <kbd>Ctrl+Alt+P</kbd>. The app hides this group when it runs standalone. The overlay does not list <kbd>Ctrl+Alt+W</kbd>. See [Keyboard shortcuts](/claude-code-memory/reference/shortcuts/) for the full list.
+
+## Config dir
+
+The app reads its Claude config dir once, at startup. The hub starts a separate copy of the app for each config dir. When you pick a config dir with <kbd>Ctrl+Alt+W</kbd>, the hub shows the copy for that dir. The app then shows the memory files, rules, auto memory, and saved analysis runs for that config dir. The browser keeps a separate recent projects list for each config dir.
+
+## Security
+
+The app has no authentication and binds to loopback by default. The hub changes these checks:
+
+- **Framing.** Standalone, the app refuses to load in any frame (`frame-ancestors 'none'` and `X-Frame-Options: DENY`). When `HUB_URL` is set, the app allows frames from its own origin, from `localhost` and `127.0.0.1` on any port, and from the hub origin. A remote page still cannot frame it.
+- **Requests.** The app accepts write requests from the hub origin as well as from its own loopback origin.
+- **Messages.** The app sends each message only to the hub origin. It accepts a message only if it comes from the parent window and from the hub origin.
+
+For the other network settings, see [CLI and configuration](/claude-code-memory/reference/configuration/).
+
+<Lightbox />

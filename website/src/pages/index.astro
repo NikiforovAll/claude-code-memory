@@ -1,0 +1,494 @@
+---
+import SiteLayout from '../kit/SiteLayout.astro';
+import Shot from '../kit/Shot.astro';
+import Keys from '../kit/Keys.astro';
+import ModeToggle from '../kit/ModeToggle.astro';
+import ThemeDial from '../kit/ThemeDial.astro';
+import Lightbox from '../kit/Lightbox.astro';
+import FamilyFooter from '../kit/FamilyFooter.astro';
+import { family, url } from '../kit/family';
+
+const GITHUB = 'https://github.com/NikiforovAll/claude-code-memory';
+const NPM = 'https://www.npmjs.com/package/claude-code-memory-explorer';
+const INSTALL = 'npx claude-code-memory-explorer --open';
+
+const see = [
+  {
+    title: 'Know what loads at startup',
+    body: 'Each file has a badge: always, startup, or conditional. Auto memory shows its MEMORY.md index and the notes it links to, which Claude reads only when it needs them.',
+    shot: 'h3c-hub-memory-auto-memory',
+    alt: 'The auto memory MEMORY.md with a startup badge, its linked notes, and three findings above the content',
+  },
+  {
+    title: 'Check when a rule applies',
+    body: 'A rule with paths in its frontmatter loads only for matching files. The preview shows the paths, and the rule stays marked conditional in the tree.',
+    shot: 'h3d-hub-memory-rule',
+    alt: 'The api-design rule with its paths frontmatter, a conditional badge, and one finding',
+  },
+];
+
+const fix = [
+  {
+    title: 'Get a health score and a fix for each finding',
+    body: 'Claude reviews each file in parallel and checks its claims against your repository. Every finding names the files involved, says why it matters, and suggests a fix. Tick the findings you want fixed, copy them as one fix plan ordered by severity, and paste it into Claude Code.',
+    shot: 'memory-analysis',
+    alt: 'Claude analysis: health 77 of 100, counts by severity, a memory map colored by worst finding, and the findings list',
+  },
+  {
+    title: 'Keep your hands on the keyboard',
+    body: 'Arrow keys move through the tree, [E] opens the file in your editor, and [Shift+P] switches the project. Press [?] for the full list.',
+    shot: 'h3b-hub-memory-shortcuts',
+    alt: 'Keyboard shortcuts help, grouped by navigate, actions, and hub',
+  },
+];
+
+const setup = [
+  {
+    title: 'Start the dashboard',
+    cmd: INSTALL,
+    body: 'Run it in your project. To look at another project, press [Shift+P].',
+  },
+  {
+    title: 'Run an analysis',
+    body: 'Optional. Click Analyze and pick the files and the model. It runs claude -p on your machine, so Claude Code must be logged in. Each run shows what it cost.',
+  },
+];
+---
+
+<SiteLayout
+  title="Claude Code Memory Diagnoser: every memory file Claude Code loads, checked"
+  description="See every memory file Claude Code loads for a project, and find what is stale, false, or conflicting."
+  image="shots/themes/ember-h3-hub-memory-light.webp"
+>
+  <div class="page">
+    <header class="nav">
+      <a class="mark" href={url()}>Claude Code Memory Diagnoser</a>
+      <nav aria-label="Site">
+        <a href={url('getting-started/')}>Docs</a>
+        <a href={GITHUB}>GitHub</a>
+        <details class="family">
+          <summary>Apps</summary>
+          <ul>
+            {family.map((s) => <li><a href={s.href} aria-current={s.id === 'memory' ? 'page' : undefined}>{s.name}</a></li>)}
+          </ul>
+        </details>
+        <ModeToggle />
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Everything Claude Code remembers about your project, in one tree.</h1>
+        <p class="lede">
+          CLAUDE.md files, rules, auto memory, agent memory, and the files they import, grouped by scope. Then let Claude
+          find what is stale, false, or in conflict.
+        </p>
+        <div class="actions">
+          <div class="cmd">
+            <code><span aria-hidden="true">$ </span>{INSTALL}</code>
+            <button type="button" class="copy" data-copy={INSTALL}>Copy</button>
+          </div>
+          <a class="button" href={url('getting-started/')}>Read the docs</a>
+        </div>
+
+        <figure class="hero-shot">
+          <Shot
+            themed="h3-hub-memory"
+            alt="Memory Diagnoser: memory files grouped by user, project, rules, auto memory, and agent memory, with the project CLAUDE.md open and four findings"
+            eager
+          />
+          <figcaption>
+            <ThemeDial />
+            <p>The 17 themes the app ships with, in light and dark. Pick one and the page follows.</p>
+          </figcaption>
+        </figure>
+      </section>
+
+      <section class="half" aria-labelledby="see">
+        <div class="half-head">
+          <h2 id="see">See</h2>
+          <p>
+            The bar at the top shows how much text each scope adds, in characters and bytes. Click an
+            <code>@import</code> to open the file it pulls in. Browsing changes nothing.
+          </p>
+        </div>
+        <div class="items">
+          {
+            see.map((it) => (
+              <article class="item">
+                <div class="item-text">
+                  <h3>{it.title}</h3>
+                  <p><Keys text={it.body} /></p>
+                </div>
+                <Shot themed={it.shot} alt={it.alt} />
+              </article>
+            ))
+          }
+        </div>
+      </section>
+
+      <section class="half" aria-labelledby="fix">
+        <div class="half-head">
+          <h2 id="fix">Fix</h2>
+          <p>
+            The analysis runs <code>claude -p</code> in your project. The reviewers can read files but cannot edit them.
+            Each run is saved, and new runs merge with the old ones.
+          </p>
+          <p class="aside">
+            Inside Claude Code Hub, the project you pick with <kbd>Ctrl+Alt+P</kbd> sets the project here too.
+          </p>
+        </div>
+        <div class="items">
+          {
+            fix.map((it) => (
+              <article class="item">
+                <div class="item-text">
+                  <h3>{it.title}</h3>
+                  <p><Keys text={it.body} /></p>
+                </div>
+                <Shot themed={it.shot} alt={it.alt} />
+              </article>
+            ))
+          }
+        </div>
+      </section>
+
+      <section class="setup" aria-labelledby="setup">
+        <h2 id="setup">Set up in two steps</h2>
+        <ol>
+          {
+            setup.map((s) => (
+              <li>
+                <h3>{s.title}</h3>
+                {s.cmd && <code class="step-cmd">{s.cmd}</code>}
+                {s.body && <p><Keys text={s.body} /></p>}
+              </li>
+            ))
+          }
+        </ol>
+      </section>
+    </main>
+
+    <FamilyFooter
+      current="memory"
+      links={[
+        { label: 'MIT license', href: `${GITHUB}/blob/main/LICENSE` },
+        { label: 'npm', href: NPM },
+        { label: 'GitHub', href: GITHUB },
+      ]}
+    />
+  </div>
+  <Lightbox />
+</SiteLayout>
+
+<script>
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy!);
+        btn.textContent = 'Copied';
+      } catch {
+        btn.textContent = 'Press Ctrl+C';
+      }
+      setTimeout(() => (btn.textContent = 'Copy'), 1600);
+    });
+  }
+</script>
+
+<style>
+  .page {
+    width: min(100% - 2rem, 78rem);
+    margin-inline: auto;
+  }
+
+  .nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-block: 1.25rem;
+  }
+  .mark {
+    font: 600 1.25rem/1 var(--font-display);
+    color: var(--c-ink1);
+    text-decoration: none;
+  }
+  .nav nav {
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+    font: 500 0.875rem var(--font-mono);
+  }
+  .nav nav a,
+  .family summary {
+    color: var(--c-ink2);
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .nav nav a:hover,
+  .family summary:hover {
+    color: var(--c-ink1);
+  }
+  .family {
+    position: relative;
+  }
+  .family summary {
+    list-style: none;
+  }
+  .family summary::-webkit-details-marker {
+    display: none;
+  }
+  .family summary::after {
+    content: ' ▾';
+  }
+  .family ul {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 0.5rem);
+    z-index: 10;
+    margin: 0;
+    padding: 0.375rem;
+    list-style: none;
+    min-width: 11rem;
+    background: var(--c-elevated);
+    border: 1px solid var(--c-border);
+    border-radius: 0.5rem;
+  }
+  .family li a {
+    display: block;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.375rem;
+  }
+  .family li a:hover {
+    background: var(--c-hover);
+  }
+  .family li a[aria-current='page'] {
+    color: var(--c-accent-ink);
+  }
+
+  .hero {
+    padding-block: clamp(2.5rem, 7vw, 6rem) 0;
+  }
+  h1 {
+    margin: 0;
+    font: 600 clamp(2.5rem, 6.4vw, 5.75rem) / 0.98 var(--font-display);
+    letter-spacing: -0.025em;
+    max-width: 22ch;
+  }
+  .lede {
+    margin: 1.75rem 0 0;
+    max-width: 38rem;
+    font-size: 1.1875rem;
+    color: var(--c-ink2);
+  }
+  .actions {
+    margin-top: 2rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+  }
+  .cmd {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.375rem 0.375rem 0.375rem 1rem;
+    background: var(--c-elevated);
+    border: 1px solid var(--c-border);
+    border-radius: 0.5rem;
+    max-width: 100%;
+  }
+  .cmd code {
+    font-size: 0.9375rem;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+  .cmd code span {
+    color: var(--c-muted);
+  }
+  .copy,
+  .button {
+    font: 500 0.875rem/1 var(--font-mono);
+    padding: 0.625rem 0.875rem;
+    border-radius: 0.375rem;
+    cursor: pointer;
+    text-decoration: none;
+  }
+  .copy {
+    color: var(--c-ink2);
+    background: transparent;
+    border: 1px solid transparent;
+    min-width: 5.5rem;
+  }
+  .copy:hover {
+    background: var(--c-hover);
+  }
+  .button {
+    display: inline-flex;
+    align-items: center;
+    color: var(--c-field);
+    background: var(--c-ink1);
+    border: 1px solid var(--c-ink1);
+  }
+  .button:hover {
+    background: var(--c-accent-ink);
+    border-color: var(--c-accent-ink);
+  }
+  .copy:focus-visible,
+  .button:focus-visible,
+  .nav a:focus-visible,
+  .family summary:focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+  }
+
+  .hero-shot {
+    margin: clamp(2.5rem, 5vw, 4rem) 0 0;
+  }
+  .hero-shot figcaption {
+    margin-top: 1.25rem;
+    display: grid;
+    gap: 0.75rem;
+  }
+  .hero-shot figcaption p {
+    margin: 0;
+    font-size: 0.9375rem;
+    color: var(--c-ink3);
+  }
+
+  .half {
+    margin-top: clamp(5rem, 10vw, 9rem);
+    display: grid;
+    grid-template-columns: minmax(14rem, 18rem) 1fr;
+    gap: 2rem clamp(2rem, 5vw, 4.5rem);
+    align-items: start;
+  }
+  .half-head {
+    position: sticky;
+    top: 2rem;
+  }
+  .half-head h2 {
+    margin: 0 0 1rem;
+    font: 600 clamp(3.5rem, 8vw, 6rem) / 0.9 var(--font-display);
+    letter-spacing: -0.03em;
+    color: var(--c-accent-ink);
+  }
+  .half-head p {
+    margin: 0 0 1rem;
+    color: var(--c-ink2);
+  }
+  .aside {
+    font-size: 0.9375rem;
+    color: var(--c-ink3);
+  }
+  .half-head code,
+  .groups-text code,
+  .item-text code {
+    font-size: 0.875em;
+    padding: 0.1em 0.35em;
+    margin: 0 0.15em;
+    background: var(--c-surface);
+    border: 1px solid var(--c-border);
+    border-radius: 0.3em;
+    white-space: nowrap;
+  }
+  @media (max-width: 360px) {
+    .half-head code,
+    .groups-text code,
+    .item-text code {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      box-decoration-break: clone;
+    }
+  }
+  .items {
+    display: grid;
+    gap: clamp(3.5rem, 6vw, 5.5rem);
+  }
+  .item {
+    display: grid;
+    gap: 1.25rem;
+  }
+  .item-text {
+    max-width: 40rem;
+  }
+  .item h3,
+  .setup h3 {
+    margin: 0 0 0.5rem;
+    font: 600 1.625rem/1.2 var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  .item p {
+    margin: 0;
+    color: var(--c-ink2);
+  }
+  .groups {
+    margin-top: clamp(5rem, 10vw, 9rem);
+    display: grid;
+    grid-template-columns: minmax(14rem, 22rem) 1fr;
+    gap: 2rem clamp(2rem, 5vw, 4.5rem);
+    align-items: center;
+  }
+  h2 {
+    margin: 0 0 1rem;
+    font: 600 clamp(2rem, 4vw, 2.75rem) / 1.08 var(--font-display);
+    letter-spacing: -0.02em;
+  }
+  .groups p {
+    margin: 0;
+    color: var(--c-ink2);
+  }
+
+  .setup {
+    margin-block: clamp(5rem, 10vw, 9rem) clamp(4rem, 8vw, 6rem);
+  }
+  .setup ol {
+    margin: 2rem 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+    gap: 1.5rem;
+  }
+  .setup li {
+    counter-increment: step;
+    padding-top: 1.25rem;
+    border-top: 2px solid var(--c-ink1);
+  }
+  .setup li::before {
+    content: counter(step);
+    display: block;
+    font: 600 1rem var(--font-mono);
+    color: var(--c-accent-ink);
+    margin-bottom: 0.5rem;
+  }
+  .step-cmd {
+    display: block;
+    margin: 0.75rem 0;
+    padding: 0.625rem 0.875rem;
+    background: var(--c-elevated);
+    border: 1px solid var(--c-border);
+    border-radius: 0.375rem;
+    font-size: 0.875rem;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .setup li p {
+    margin: 0;
+    color: var(--c-ink2);
+    font-size: 0.9375rem;
+  }
+
+  @media (max-width: 52rem) {
+    .half,
+    .groups {
+      grid-template-columns: 1fr;
+    }
+    .half-head {
+      position: static;
+    }
+    .nav nav {
+      gap: 0.875rem;
+    }
+  }
+</style>

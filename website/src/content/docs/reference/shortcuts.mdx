@@ -1,0 +1,71 @@
+---
+title: Keyboard shortcuts
+description: Every key Claude Code Memory Diagnoser handles, in the app, in the project picker, and inside Claude Code Hub.
+---
+
+import Shot from '../../../kit/Shot.astro';
+import Lightbox from '../../../kit/Lightbox.astro';
+
+Press <kbd>?</kbd> or click the <kbd>?</kbd> button in the top bar to open the help overlay. It lists the Navigate, Actions, and Hub keys. To close it, press <kbd>?</kbd> or <kbd>Esc</kbd>, click the X, or click outside the dialog.
+
+<Shot themed="h3b-hub-memory-shortcuts" alt="The Claude Code Memory Diagnoser help overlay with the Navigate, Actions, and Hub shortcut groups" />
+
+## Navigate
+
+The navigation keys move the selection in the file tree on the left.
+
+| Key | Action |
+| --- | --- |
+| <kbd>↓</kbd> or <kbd>j</kbd> | Select the next item. After the last item, the selection goes back to the first. With nothing selected, it selects the first item. |
+| <kbd>↑</kbd> or <kbd>k</kbd> | Select the previous item. Before the first item, the selection goes to the last. With nothing selected, it selects the last item. |
+| <kbd>→</kbd> or <kbd>l</kbd> | Expand a collapsed item. If the item is already expanded, select its first child. On an item with no children, nothing happens. With nothing selected, it selects the first item. |
+| <kbd>←</kbd> or <kbd>h</kbd> | Collapse an expanded item. Otherwise, select its parent. On a top-level item, nothing happens. With nothing selected, it selects the last item. |
+| <kbd>Enter</kbd> | Show the preview of the selected file again. The help overlay calls this "Select item". |
+| <kbd>Esc</kbd> | Close the open dialog. If no dialog is open and the health view is on screen, close the health view. |
+
+The navigation keys do nothing while you hold <kbd>Ctrl</kbd>, <kbd>Alt</kbd>, or <kbd>Meta</kbd>. So in Claude Code Hub, <kbd>Ctrl+Alt+←</kbd> and <kbd>Ctrl+Alt+→</kbd> switch apps and do not move the tree selection.
+
+## Actions
+
+| Key | Action |
+| --- | --- |
+| <kbd>e</kbd> | Open the selected file in your editor. The app uses the `EDITOR` environment variable, or `code` (VS Code) when it is not set. |
+| <kbd>r</kbd> | Refresh the data. This clears the 30-second scan cache and reads the files from disk again. |
+| <kbd>t</kbd> | Toggle between light and dark mode. |
+| <kbd>Shift+P</kbd> | Open the **Switch Project** picker. |
+| <kbd>?</kbd> | Show or hide the help overlay. |
+
+No key opens the health view. Click **Analyze** in the top bar to open it. For more, see [Analyze memory with Claude](/claude-code-memory/guides/analyze/).
+
+## When shortcuts do not work
+
+- While you type in a text box, the app ignores all of these keys.
+- While a dialog is open, only <kbd>Esc</kbd> works. It closes the dialog. In the help overlay, <kbd>?</kbd> also closes it. The app ignores the keys on this page until you close the dialog. The project picker has its own keys. See [Project picker](#project-picker).
+
+## Project picker
+
+Press <kbd>Shift+P</kbd> or click the folder button with the project name in the top bar to open the picker. Type in the filter box to filter the list of recent projects.
+
+| Key | Action |
+| --- | --- |
+| <kbd>↓</kbd> or <kbd>Ctrl+N</kbd> | Move down the list. |
+| <kbd>↑</kbd> or <kbd>Ctrl+P</kbd> | Move up the list. |
+| <kbd>Enter</kbd> | Switch to the highlighted project. |
+| <kbd>Esc</kbd> | Close the picker. |
+
+Click **+ Add path...** to type a full directory path. In that form, <kbd>Enter</kbd> switches to the path you typed, and <kbd>Esc</kbd> goes back to the list. It does not close the picker. For more, see [Browse memory files](/claude-code-memory/guides/browse/).
+
+## Claude Code Hub keys
+
+These keys work only when the app runs inside Claude Code Hub. The app sends them to the hub. When the app runs on its own, the help overlay does not show the Hub group.
+
+| Key | Action |
+| --- | --- |
+| <kbd>Ctrl+Alt+←</kbd> or <kbd>Ctrl+Alt+→</kbd> | Go to the previous or next hub app. |
+| <kbd>Alt+1</kbd> to <kbd>Alt+9</kbd> | Go to a hub app by its number. |
+| <kbd>Ctrl+Alt+P</kbd> | Open the hub project picker. |
+| <kbd>Ctrl+Alt+W</kbd> | Open the hub config-dir picker. The help overlay does not list this key. |
+
+For more, see [Run inside Claude Code Hub](/claude-code-memory/reference/hub/).
+
+<Lightbox />

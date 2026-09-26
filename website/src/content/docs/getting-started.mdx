@@ -1,0 +1,82 @@
+---
+title: Getting started
+description: Start Claude Code Memory Diagnoser in your project, learn the screen, and run a first analysis if you want one.
+---
+
+import Shot from '../../kit/Shot.astro';
+import Lightbox from '../../kit/Lightbox.astro';
+
+Claude Code Memory Diagnoser shows every memory file that Claude Code loads for a project. It runs on your machine, and you use it in the browser.
+
+## Requirements
+
+- Node.js 20 or later.
+- Claude Code, installed and logged in. You need it only for Analyze. Browsing works without it.
+
+## Start the app
+
+Open a terminal in your project directory and run:
+
+```bash
+npx claude-code-memory-explorer --open
+```
+
+The app scans the memory files for the current directory. `--open` opens the page in your default browser. You do not need a config file.
+
+The page opens the project you used last in this browser. If you started the app in a new directory, switch to it with the project picker. See [Switch project](#switch-project).
+
+The terminal prints two lines:
+
+```text
+Memory Diagnoser running at http://localhost:3544
+Project: /path/to/your/project
+```
+
+The default port is 3544. If that port is busy, the app uses a random free port, and the banner shows that port. To set the port, see [CLI and configuration](/claude-code-memory/reference/configuration/#startup-and-port).
+
+## Install as an app
+
+The page is a progressive web app. In Chrome or Edge, use the install button in the address bar to open the app in its own window. The app window needs the server to load data, and it opens the address you installed it from. Keep the server on the same port, for example with `--port 3544`.
+
+## The screen
+
+<Shot themed="h3-hub-memory" alt="Claude Code Memory Diagnoser with the source tree on the left, the project CLAUDE.md in the file view, and the summary cards at the bottom" />
+
+From top to bottom, the screen has these parts:
+
+- **Top bar.** The project name (click it to switch project), Analyze, Refresh, the color theme picker, the light/dark toggle, help, and a link to GitHub.
+- **Memory sources bar.** The total chars and bytes that Claude Code loads, with one colored part for each scope. Click it to highlight those files in the tree.
+- **Tree.** Every memory file the app found, in groups: Managed Policy, User, Project, Rules, Auto Memory, Skills, and Agent Memory. An icon on each row shows when the file loads.
+- **File view.** The file you selected, with its scope, load type, size, frontmatter, imports, full path, and content.
+- **Summary cards.** Files, Chars, Bytes, and Always loaded, counted over the same files as the Memory sources bar.
+
+On first load, the app selects the project `CLAUDE.md`. If the project has none, it selects your user `CLAUDE.md`.
+
+To learn what each group means and in which order Claude Code loads the files, read [What Claude Code loads](/claude-code-memory/guides/memory-stack/). For the tree icons and the file view, read [Browse memory files](/claude-code-memory/guides/browse/).
+
+## Switch project
+
+To look at a different project, click the project name in the top bar or press <kbd>Shift+P</kbd>. The **Switch Project** picker lists your recent projects, and **+ Add path...** lets you type a new one. See [Switch projects](/claude-code-memory/guides/browse/#switch-projects).
+
+## What the app changes on disk
+
+Browsing changes nothing on disk. Only **Delete file** and the `MEMORY.md` cleanup button change your files, and both ask you to confirm first. Analyze does not change your memory files. It saves its runs in your Claude config directory. See [Files the app writes](/claude-code-memory/reference/configuration/#files-the-app-writes).
+
+## Run a first analysis (optional)
+
+Analyze asks Claude to review your memory files and report problems, such as duplicates, contradictions, and stale facts.
+
+1. Click **Analyze** in the top bar.
+2. Click **New analysis…**, select the files to check, and select a model.
+3. Click **Run analysis**.
+
+The app runs `claude -p` on your machine, so Claude Code must be installed and logged in. The run uses your Claude plan or API credit, and each run shows what it cost. For the details, read [Analyze memory with Claude](/claude-code-memory/guides/analyze/).
+
+## Next steps
+
+- [What Claude Code loads](/claude-code-memory/guides/memory-stack/)
+- [Browse memory files](/claude-code-memory/guides/browse/)
+- [Analyze memory with Claude](/claude-code-memory/guides/analyze/)
+- [Keyboard shortcuts](/claude-code-memory/reference/shortcuts/)
+
+<Lightbox />

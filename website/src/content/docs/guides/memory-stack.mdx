@@ -1,0 +1,157 @@
+---
+title: What Claude Code loads
+description: Which memory files Claude Code Memory Diagnoser finds for a project, where each one lives, and when Claude Code loads it.
+---
+
+import Shot from '../../../kit/Shot.astro';
+import Lightbox from '../../../kit/Lightbox.astro';
+
+Claude Code Memory Diagnoser scans the same places Claude Code reads memory from. It shows each file in the tree with a load type, so you can see which files cost context in every session and which load only when Claude needs them.
+
+## Discovery order
+
+The app builds the list in this order:
+
+1. Managed policy `CLAUDE.md`
+2. User `CLAUDE.md`
+3. User rules
+4. Project `CLAUDE.md` files, in the project directory and each parent directory
+5. Nested `CLAUDE.md` files in subdirectories of the project
+6. Project rules
+7. Project skills
+8. Auto memory
+9. Agent memory
+10. Files that the files above import
+
+The tree groups the results as Managed Policy, User, Project, Rules, Auto Memory, Skills, and Agent Memory. Each group header shows the number of top-level files in the group.
+
+## Load types
+
+Each row in the tree has an icon for its load type. Hover the icon to see its name.
+
+| Icon | Load type | When Claude Code loads the file |
+| --- | --- | --- |
+| ● | Always | In every session. |
+| ◒ | Startup | At session start, up to a size cap. |
+| ○ | Conditional | When Claude works on a file that matches the rule's `paths` globs. |
+| ◌ | On-demand | Only when Claude reads it, for example a skill body or a memory topic file. |
+| ◎ | Tree | When Claude works in that subdirectory. |
+| @ | Import | With the file that imports it. |
+| ↗ | Link | Not loaded automatically. A markdown link only points to the file. |
+
+The tree shows conditional, on-demand, tree, and link rows in a muted color.
+
+## Config directory
+
+User-level files live in the Claude config directory, `~/.claude` by default. This page writes `<config dir>` for that directory. To use a different one, see [Config dir](/claude-code-memory/reference/configuration/#config-dir).
+
+## Managed policy
+
+An administrator can put a `CLAUDE.md` at a fixed system path. Its load type is always.
+
+| OS | Path |
+| --- | --- |
+| Windows | `%ProgramFiles%\ClaudeCode\CLAUDE.md` |
+| macOS | `/Library/Application Support/ClaudeCode/CLAUDE.md` |
+| Linux | `/etc/claude-code/CLAUDE.md` |
+
+## User CLAUDE.md
+
+Your personal instructions for all projects live in `<config dir>/CLAUDE.md`. Its load type is always.
+
+## Project CLAUDE.md
+
+The app starts at the project directory and goes up one directory at a time. It stops before the filesystem root. In each directory it checks four names:
+
+- `CLAUDE.md`
+- `.claude/CLAUDE.md`
+- `CLAUDE.local.md`
+- `.claude/CLAUDE.local.md`
+
+All of these have the load type always. `CLAUDE.local.md` files show in the Project group. There is no separate group for local files.
+
+## Nested CLAUDE.md
+
+The app also looks for the same four names in subdirectories of the project, up to 6 levels deep. The tree shows each one with its relative path, for example `src/api/CLAUDE.md`. Their load type is tree. Claude Code loads them when it works in that directory.
+
+The scan skips `node_modules`, `.git`, `.hg`, `.svn`, `dist`, `build`, `out`, `.next`, `.nuxt`, `vendor`, `__pycache__`, `.venv`, `venv`, and every directory whose name starts with a dot.
+
+## Rules
+
+Rules are `.md` files in two folders. The app reads subfolders too.
+
+- `<config dir>/rules/` for user rules
+- `<project>/.claude/rules/` for project rules
+
+A rule with a non-empty `paths` list in its frontmatter is conditional. A rule without `paths` is always loaded. The app does not scan `.claude/rules` in parent directories of the project.
+
+<Shot themed="h3d-hub-memory-rule" alt="A project rule open in the file view, with its paths frontmatter shown as badges" />
+
+## Project skills
+
+The app lists each `SKILL.md` under `<project>/.claude/skills/`, up to 4 levels deep. It also finds `.claude/skills` folders in project subdirectories and names those skills `<subdir>:<name>`. The skill name comes from the `name` frontmatter field, or else from the folder name.
+
+Skills are on-demand. Claude Code loads a skill body only when it uses the skill. The app does not scan user skills in `<config dir>/skills`.
+
+## Auto memory
+
+Claude Code keeps auto memory for each project in `<projects base>/<encoded path>/memory/`.
+
+The projects base is `<config dir>/projects`. If `autoMemoryDirectory` is set in `<config dir>/settings.json`, the app uses that folder instead. It reads this setting from user settings only, not from project settings.
+
+To encode the project path, the app changes each `\`, `/`, and `:` to `-`. For example, `C:\Users\foo` becomes `C--Users-foo`.
+
+If that folder has no `memory` directory, the app tries two more lookups:
+
+1. If the project is a git linked worktree, it uses the memory of the main worktree.
+2. It uses the first folder in the projects base whose name ends with the last two segments of the project path. This match ignores case.
+
+In the memory folder, `MEMORY.md` has the load type startup. Claude Code reads only its first 200 lines, up to 25 KB. See [Read a MEMORY.md index](/claude-code-memory/guides/browse/#read-a-memorymd-index) for how the file view shows this. The other `.md` files in the folder are on-demand topic files.
+
+<Shot themed="h3c-hub-memory-auto-memory" alt="The Auto Memory group in the tree, with MEMORY.md open and its index of topic files" />
+
+## Agent memory
+
+Subagents with persistent memory keep it in one folder per agent:
+
+| Scope | Folder |
+| --- | --- |
+| User | `<config dir>/agent-memory/<agent>/` |
+| Project | `<project>/.claude/agent-memory/<agent>/` |
+| Local | `<project>/.claude/agent-memory-local/<agent>/` |
+
+Each folder has the same layout as auto memory: `MEMORY.md` loads at startup and the other files are on-demand. In the tree, the Agent Memory group is collapsed at first, and each agent has a header with its scope.
+
+## Imports and links
+
+The app reads each file for references to other files:
+
+- `@path/to/file.md` is an import. The path must contain a `/` and the last segment must have a file extension, so `@biomejs/biome` does not count.
+- `@~/path/file.md` is an import from your home directory.
+- A standalone `@name.md` is an import of a file next to the current one.
+- `[text](file.md)` is a link. Links to `http` and `https` URLs do not count.
+
+A path that starts with `~` resolves from your home directory. Other paths resolve from the folder of the file that holds the reference.
+
+Imported files show under their parent with the load type import. Linked files show under their parent with the load type link. Topic files in a memory folder that MEMORY.md links to show under MEMORY.md and keep the on-demand type. The app follows imports and links up to 5 levels deep. When a target file does not exist, the file view lists the reference as unresolved and marks it with ⚠.
+
+## Footprint
+
+The Memory sources bar at the top and the summary cards at the bottom show the standing cost of memory. That is the set of files that can load in a session without Claude reading them on purpose. The count includes conditional rules, which load only when Claude works on a file that matches their paths. The count leaves out:
+
+- Skill bodies
+- Files reached only through a markdown link
+- Nested `CLAUDE.md` files with the tree load type, and the files they import
+- On-demand topic files in auto memory and agent memory
+
+For each skill, the count adds the characters of its name and description, because those go into every session. A skill with `disable-model-invocation: true` adds nothing.
+
+The bar shows characters and bytes, with one colored segment per group. The cards show Files, Chars, Bytes, and Always loaded. Always loaded counts files with the always or startup load type. The app does not estimate tokens. To use the bar, see [See the memory footprint](/claude-code-memory/guides/browse/#see-the-memory-footprint).
+
+## Refresh
+
+The app keeps the scan result for 30 seconds. It scans again when you switch projects, delete a file, or clean up orphaned links. To see a change you made in an editor at once, press <kbd>r</kbd> or click Refresh in the top bar.
+
+To scan a different project, click the folder button in the top bar or press <kbd>Shift+P</kbd>. See [Switch projects](/claude-code-memory/guides/browse/#switch-projects).
+
+<Lightbox />

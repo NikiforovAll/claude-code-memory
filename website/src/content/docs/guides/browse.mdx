@@ -1,0 +1,120 @@
+---
+title: Browse memory files
+description: Find a memory file in the tree, read what it loads, and open, delete, or clean it up.
+---
+
+import Shot from '../../../kit/Shot.astro';
+import Lightbox from '../../../kit/Lightbox.astro';
+
+The left panel is a tree of every memory file Claude Code Memory Diagnoser found for the current project. The right panel shows the file you select. For what each file is and when Claude Code loads it, see [What Claude Code loads](/claude-code-memory/guides/memory-stack/).
+
+<Shot themed="h3-hub-memory" alt="Claude Code Memory Diagnoser with the file tree on the left and a CLAUDE.md file open on the right" />
+
+## Find a file in the tree
+
+The tree puts files in groups, in this order:
+
+1. Managed Policy
+2. User
+3. Project
+4. Rules
+5. Auto Memory
+6. Skills
+7. Agent Memory
+
+A group shows only when it has files. The number after a group name is its file count. Each row shows a load icon, the file name, and the line count, for example `42L`. Hover over the icon to see the load type. For what each icon means, see [Load types](/claude-code-memory/guides/memory-stack/#load-types).
+
+The Agent Memory group is collapsed at first. Click its header to open or close it. The app remembers this in the browser. Inside, files are grouped per agent, and each agent has a `user`, `project`, or `local` tag.
+
+A file that imports or links other files has a chevron (▸). Click the chevron to show those files under it. Imported and linked files start collapsed. Files that a `MEMORY.md` indexes start expanded.
+
+You can also move through the tree with the keyboard: <kbd>↓</kbd> or <kbd>j</kbd>, <kbd>↑</kbd> or <kbd>k</kbd>, <kbd>→</kbd> or <kbd>l</kbd>, and <kbd>←</kbd> or <kbd>h</kbd>. See [Keyboard shortcuts](/claude-code-memory/reference/shortcuts/).
+
+The app keeps the selected file in the URL hash. You can bookmark a file, reload the page, and use the browser back and forward buttons to move between files you opened. When you open the app with no file selected, it selects the project `CLAUDE.md`, or the user `CLAUDE.md` if the project has none.
+
+## Read the file view
+
+The header of the file view shows:
+
+- A scope badge, such as `user` or `project`, and the file name.
+- The `description` from the frontmatter, on its own line. Click it to see the full text.
+- A badge with the load type, and a badge with the line count and size, for example `42L / 1.3KB`.
+- A chip for each other frontmatter key, such as `paths` on a rule.
+- Links to the files this file imports or links. Click one to open it. An import whose target does not exist shows with ⚠.
+- The full path of the file.
+
+The app highlights the content by file extension: `md`, `json`, `yaml`, `yml`, `js`, `ts`, `py`, `sh`, `bash`, `css`, `html`, `xml`, and `toml`. It highlights markdown frontmatter as YAML. An `@file.md` import or a `[text](file.md)` link to a file in the tree is a link. Click it to open that file.
+
+If you ran an analysis, findings for the file show above the content. See [Analyze memory with Claude](/claude-code-memory/guides/analyze/).
+
+## Read a MEMORY.md index
+
+Auto memory and agent memory keep an index in `MEMORY.md`. Lines in the form `- [Name](file.md) - description` show as a table above the raw file. The separator can be a hyphen, an en dash, or an em dash. Each row has:
+
+- A type badge from the file name prefix before the first `_`, for example `feedback`, `user`, `project`, or `reference`. A file with no prefix gets `memory`.
+- The name, as a link to the file. If the file does not exist, the name shows with ⚠.
+- The description.
+
+<Shot themed="h3c-hub-memory-auto-memory" alt="An auto memory MEMORY.md with its index table, type badges, and linked memory files" />
+
+At startup, Claude Code reads the first 200 lines or 25 KB of `MEMORY.md`. The view marks only the 200-line limit. For a `MEMORY.md` longer than 200 lines with no index lines, the view draws a line labeled `Cutoff: 200 lines / loaded at startup` and fades the lines after it.
+
+## See the memory footprint
+
+The **Memory sources** bar under the top bar shows the total characters and size of the files that count toward the footprint. It has one colored segment per group, sized by characters. Skill descriptions get their own segment.
+
+- Click the bar to highlight in the tree every file that counts toward the footprint.
+- Click a segment to highlight only the files in that group.
+- Click the same place again to clear the highlight.
+
+The summary cards at the bottom show Files, Chars, Bytes, and Always loaded. For which files count and why, see [Footprint](/claude-code-memory/guides/memory-stack/#footprint).
+
+## Open a file in your editor
+
+Click the pencil button in the file view header, or press <kbd>e</kbd>. The app runs the editor in the `EDITOR` environment variable. If `EDITOR` is not set, it runs `code` (VS Code). VS Code opens the file in a new window. A message shows `Opened in editor` or the error.
+
+## Delete a file
+
+1. Click the trash button in the file view header.
+2. Check the file name and path in the **Delete file?** dialog.
+3. Click **Delete**.
+
+The app deletes the file from disk. You cannot undo this. The server deletes only files under the Claude config directory, the current project, or the auto memory projects directory. For other paths it returns `path outside allowed roots`.
+
+## Remove broken lines from MEMORY.md
+
+When a `MEMORY.md` has index lines that link to missing files, the header shows a cleanup button with the number of broken links.
+
+1. Click the cleanup button.
+2. Check the list in the **Cleanup orphaned refs?** dialog.
+3. Click **Remove**.
+
+The app removes each bullet line `- [name](file.md)` whose target file is missing on disk. It keeps all other lines.
+
+## Switch projects
+
+1. Click the project name with the folder icon in the top bar, or press <kbd>Shift+P</kbd>.
+2. In **Switch Project**, type to filter the list of recent projects. The current project has a `current` tag.
+3. Use <kbd>↓</kbd> or <kbd>Ctrl+N</kbd> and <kbd>↑</kbd> or <kbd>Ctrl+P</kbd> to move, then press <kbd>Enter</kbd>. You can also click a project.
+
+To open a project that is not in the list, click **+ Add path...**, type the full path of the project directory, and click **Switch**. <kbd>Esc</kbd> goes back to the list. If the directory does not exist, the app shows `directory not found`.
+
+The list keeps up to 20 recent projects for each Claude config directory. Click the X on a row to remove it from the list. This does not change files on disk.
+
+## Change the layout and theme
+
+- Drag the edge between the tree and the file view to resize the tree. The width is between 150 px and half of the window. The app saves the width.
+- Click the palette button in the top bar to pick one of 17 color themes: Ember (the default), Gruvbox, Catppuccin, Tokyo Night, Solarized, Dracula, Nord, Rosé Pine, Everforest, Kanagawa, One Dark, Night Owl, Monokai Pro, GitHub, Ayu, Vitesse, and Synthwave '84.
+- Click the sun button, or press <kbd>t</kbd>, to switch between light and dark. Dark is the default.
+
+The browser saves the theme and the light or dark mode.
+
+## Empty states
+
+- **No memory sources found.** The tree has no files for this project. Check that you picked the correct project. See [Troubleshooting](/claude-code-memory/reference/troubleshooting/).
+- **Select a file to preview.** No file is selected. Click a file in the tree.
+- **Failed to load file.** The app could not read the file. Press <kbd>r</kbd> to scan again.
+
+The app caches the scan for 30 seconds. After you change files outside the app, click the refresh button or press <kbd>r</kbd>.
+
+<Lightbox />

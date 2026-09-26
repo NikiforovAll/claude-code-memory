@@ -1,0 +1,155 @@
+---
+title: Analyze memory with Claude
+description: Run a Claude Code audit of your memory files, read the health view, and turn findings into fixes.
+---
+
+import Shot from '../../../kit/Shot.astro';
+import Lightbox from '../../../kit/Lightbox.astro';
+
+Analyze sends the memory files you pick to Claude Code on your machine. Claude checks each file against a rubric and against your repository, then reports findings such as duplicates, contradictions, and stale facts. Claude Code Memory Diagnoser shows the results as a health view and marks the files in the tree.
+
+<Shot themed="memory-analysis" alt="The health view with a score ring, severity tiles, a memory map of audited files, and a list of findings" />
+
+## Before you start
+
+The analysis runs the `claude` CLI. It must be on your `PATH` and logged in. If the app cannot start it, the run fails with a `claude not found` error that includes the system error text, for example `spawn claude ENOENT`.
+
+## Run an analysis
+
+1. Click **Analyze** in the top bar. The preview panel changes to the health view.
+2. Click **New analysis…**. The **Select what to analyze** panel opens.
+3. Select the files to audit. The panel has one group for each file type. A group shows only when the project has files of that type:
+   - **Auto memory**
+   - **Skills**
+   - **CLAUDE.md**
+   - **Agent memory**
+   - **User CLAUDE.md**
+
+   Each group shows how many of its files you selected, for example `2/5`. Click a group row to select or clear all of its files, or click one file. The first time you open the panel, only the auto memory files are selected.
+4. In the panel footer, pick a model: `sonnet`, `opus`, or `fable`. The default is `sonnet`. The app remembers your choice.
+5. Click **Run analysis (n)**, where `n` is the number of selected files.
+
+To leave the health view, click **Analyze** again, press <kbd>Esc</kbd>, or select a file in the tree.
+
+The app does not audit rules or files that another file imports. An imported file counts as part of the file that imports it. If you do not select the user CLAUDE.md, the app still sends it to Claude as reference, so Claude can tell if a project memory belongs in your global file.
+
+## How the run works
+
+The app starts Claude Code in headless mode with this command:
+
+```bash
+claude -p --output-format json --json-schema <schema> --agents <reviewers> \
+  --allowedTools "Bash(command -v:*)" "Bash(which:*)" "Bash(where:*)" [--model <model>]
+```
+
+- The app sends the prompt on stdin.
+- The working directory is the project root. For a run that audits only the user CLAUDE.md, it is your home directory.
+- If the app uses a config directory other than `~/.claude`, it sets `CLAUDE_CONFIG_DIR` for the `claude` process.
+- The `--json-schema` flag makes Claude return findings in a fixed shape.
+
+### Reviewers
+
+The main Claude session is an orchestrator. It starts one reviewer subagent for each audited file, all in one parallel batch:
+
+| Reviewer | Reviews |
+| --- | --- |
+| `memory-reviewer` | Auto memory and agent memory files |
+| `skill-reviewer` | Project `SKILL.md` files |
+| `claude-md-reviewer` | Project and local CLAUDE.md files, including `CLAUDE.local.md` |
+| `claude-md-user-reviewer` | The user CLAUDE.md |
+
+Reviewers have the `Read`, `Grep`, `Glob`, and `Bash` tools. Bash can run only `command -v`, `which`, and `where`. Reviewers cannot edit files.
+
+Reviewers check the claims in a file before they judge it. If a file names a path, command, script, or flag, the reviewer looks for it in the repository. The user CLAUDE.md reviewer checks against your machine and config directory only, never against the current repository. If a check cannot run, the reviewer marks the claim `UNCHECKED` and does not report it as stale.
+
+The orchestrator then merges the reviewer results and compares files side by side to find the cross-file kinds.
+
+## What it checks
+
+### Finding kinds
+
+| Kind | When Claude reports it |
+| --- | --- |
+| `duplicate` | Two files say the same thing in different words. |
+| `contradiction` | Two files give conflicting guidance. |
+| `promote` | A memory states a general preference that belongs in the user CLAUDE.md. |
+| `merge` | Several small files on one topic would be clearer as one file. |
+| `stale` | Content is out of date, or an `@` import points to a missing file. |
+| `invalidate` | A rule or memory no longer applies at all. Claude suggests that you delete it. |
+| `quality` | Content is vague, has no reason, or is unlikely to change what the agent does. |
+| `override` | A project rule contradicts a user rule. Only when you audit the user CLAUDE.md and a project CLAUDE.md. |
+| `shadow` | A project rule repeats a user rule almost word for word. Only when you audit the user CLAUDE.md and a project CLAUDE.md. |
+| `demote` | A user rule is specific to one project or stack. Only when you audit the user CLAUDE.md. |
+
+### Severity and scope
+
+| Severity | Meaning |
+| --- | --- |
+| `high` | Harmful, for example a contradiction or wrong guidance. |
+| `med` | Wastes context or causes confusion. |
+| `low` | Polish. |
+
+Each finding also has a scope. `user` means it cites only the user CLAUDE.md. `cross` means it cites the user CLAUDE.md and a project file. `project` covers all other findings. User and cross findings show a scope badge.
+
+### Rubrics
+
+Each reviewer gets a shared rubric plus one for its file type.
+
+- **Shared.** State the wanted behavior instead of a ban. Do not copy what `package.json`, `--help`, or the directory layout already tell. Drop instructions the model follows by default. Keep each fact in one place.
+- **Memory.** One fact per file, with the reason. Each `MEMORY.md` line is a short pointer, not content. Record lessons, not the story of one session. The fact must still be true.
+- **Skill.** The description starts with its trigger words. Branch-specific detail goes in separate files. Steps end on a condition you can check.
+- **CLAUDE.md.** Every word costs context on every turn. Claude flags task-specific content, vague or no-op rules, stale facts, too much IMPORTANT or ALWAYS, rules in the wrong file, rules a linter should enforce, rules with no reason, and missing build, test, or architecture facts.
+- **User CLAUDE.md.** Every rule must hold on any project. Tools and files it names must exist on the machine. The file must agree with itself. Each rule must name a behavior the model can do.
+
+## While it runs
+
+A banner shows `Analyzing memory with Claude Code — usually 30–90s…` with the model, scope, and start time. The previous results stay on screen under the banner. The app checks for the result every 2.5 seconds.
+
+The run has no timeout, and the app never stops it. After 30 minutes the banner says the run appears stalled, for example after a server restart. If the run finishes later, its result still shows.
+
+## Cost
+
+The run uses your Claude plan or API credit. When it ends, the app reads `total_cost_usd` and `duration_ms` from the Claude Code output. The analysis header shows the cost in dollars, the duration in seconds, the model, and the scope. Each run chip shows its cost too.
+
+## Read the health view
+
+The top of the health view has these tiles:
+
+- **Health.** A score from 2 to 100. It starts at 100 and loses 10 for each high finding, 3 for each medium finding, and 1 for each low finding. The ring is green at 80 or more, amber at 50 or more, and red below 50.
+- **High**, **Medium**, and **Low.** The count of findings for each severity.
+- **Clean.** Audited files with no findings, out of all audited files.
+- **Trend.** One column of findings for each run, oldest first. It shows when you have two or more runs. Click a column to show that run.
+
+Dismissed findings do not count toward the score or the tiles.
+
+Below the tiles are the summary from Claude and the memory map. The summary shows when you view one run. The merged view does not show it. The map has one cell for each audited file, colored by its worst finding. Click a cell to show only the findings for that file. Click it again, or click the file pill in the filter bar, to clear the filter.
+
+## Act on findings
+
+Each finding card shows its kind, title, the files it cites, the detail, and a suggested fix. Click a file chip to open that file.
+
+- Click a severity pill (**all**, **high**, **med**, **low**) to filter the list.
+- Click **Copy prompt** to copy a fix instruction for that finding. The prompt names the file paths, the kind, severity, title, detail, and action. For auto memory it also asks Claude to update the `MEMORY.md` index lines. Paste it into any Claude Code session.
+- Click **Dismiss** to hide a finding. Dismissals stay after a reload. A new run hides a finding again only when it has the same kind and title. Click **restore** next to the dismissed count to show them again.
+- Select the check box on several cards, then click **Copy fix plan (n)**. The plan lists the selected findings from high to low severity as one prompt.
+- Click **Copy all** in the header to copy the prompts for all findings that you did not dismiss.
+
+After an analysis, the file tree shows a badge on each file with findings. The badge color is the worst severity. An audited file with no findings shows a hollow dot. When you open a file that has findings, the file view lists them under `Claude analysis — N finding(s) for this file`, with the same **Copy prompt** and **Dismiss** buttons.
+
+## Runs and storage
+
+The app saves runs in `<config>/memory-analysis/<encoded project>.json`, where `<config>` is your Claude config directory, such as `~/.claude`. Findings about the user CLAUDE.md go in `user-scope.json`. All projects share that file, so a user CLAUDE.md audit shows in every project. The app keeps the last 10 runs.
+
+When you have more than one run, the default view merges them. Each file shows the result of the newest run that audited it, so a small run on one file does not hide the results for other files. The run chips let you show one run at a time. Click the **×** on a chip to delete that run.
+
+If an audited file changes after a run, the header shows `memory changed since`. For the user CLAUDE.md it shows `user CLAUDE.md changed since`.
+
+Each run from the panel or from **Retry** starts a new Claude run.
+
+## When a run fails
+
+A failed run shows its error above the previous results, with a **Retry** button. **Retry** runs the default scope, auto memory only, with the model you picked. If Claude Code ends without the structured findings, the app counts the run as failed. It does not show an empty list as a clean result.
+
+For more help, see [Troubleshooting](/claude-code-memory/reference/troubleshooting/). To learn which files Claude Code loads, see [What Claude Code loads](/claude-code-memory/guides/memory-stack/).
+
+<Lightbox />
