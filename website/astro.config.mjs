@@ -11,6 +11,10 @@ export default defineConfig({
 			title: 'Claude Code Memory Diagnoser',
 			description: 'See every memory file Claude Code loads for a project, and find what is stale, false, or conflicting.',
 			favicon: '/favicon.svg',
+			head: [
+				{ tag: 'meta', attrs: { property: 'og:image', content: 'https://nikiforovall.blog/claude-code-memory/og.png' } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: 'https://nikiforovall.blog/claude-code-memory/og.png' } },
+			],
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/NikiforovAll/claude-code-memory' }],
 			editLink: { baseUrl: 'https://github.com/NikiforovAll/claude-code-memory/edit/main/website/' },
 			customCss: ['./src/kit/kit.css'],
