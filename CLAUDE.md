@@ -10,7 +10,7 @@ Dashboard for visualizing all memory sources that influence Claude Code behavior
 
 - `npm start` — run server (port 3544)
 - `npm run dev` — run with auto-open browser
-- `npx @biomejs/biome check public/app.js public/style.css` — lint
+- `npx @biomejs/biome check` — lint the files in `biome.json` (`public/`, `server.js`, `lib/`); the formatter is off for the server files
 - `npx @biomejs/biome format --write public/app.js public/style.css` — format
 - `npm test` — node test runner over `test/*.test.js`
 

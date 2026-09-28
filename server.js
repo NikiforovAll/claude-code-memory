@@ -2,11 +2,11 @@
 'use strict';
 
 const express = require('express');
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const { execFileSync, spawn } = require('child_process');
-const crypto = require('crypto');
+const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+const { execFileSync, spawn } = require('node:child_process');
+const crypto = require('node:crypto');
 const { assertOpenTarget, openInEditor } = require('./lib/open-editor');
 const { createNetGuard } = require('./lib/net-guard');
 
@@ -156,8 +156,7 @@ function parseImports(content) {
   const softLinks = [];
   // Match @path/to/file.ext — must contain / or \ to be a file path import
   const re = /@(~?[\w./-]+\/[\w./-]+|~\/[\w./-]+)/g;
-  let m;
-  while ((m = re.exec(content)) !== null) {
+  for (const m of content.matchAll(re)) {
     if (m[1].includes('.') && !m[1].includes('/')) continue;
     // Skip npm scoped packages (e.g. @biomejs/biome) — require file extension in last segment
     const lastSeg = m[1].split('/').pop();
@@ -166,12 +165,12 @@ function parseImports(content) {
   }
   // Also match standalone @filename.md references (no path separator needed)
   const re2 = /(?:^|\s)@([\w-]+\.md)\b/gm;
-  while ((m = re2.exec(content)) !== null) {
+  for (const m of content.matchAll(re2)) {
     if (!imports.includes(m[1])) imports.push(m[1]);
   }
   // Match markdown links [text](path.md) — soft references, don't change load type
   const re3 = /\[.*?\]\(((?!https?:\/\/)[^)]+\.md)\)/g;
-  while ((m = re3.exec(content)) !== null) {
+  for (const m of content.matchAll(re3)) {
     if (!imports.includes(m[1]) && !softLinks.includes(m[1])) softLinks.push(m[1]);
   }
   return { imports, softLinks };
@@ -216,7 +215,7 @@ function spreadImports(filePath, content) {
 }
 
 function hasPathsFilter(frontmatter) {
-  if (!frontmatter || !frontmatter.paths) return false;
+  if (!frontmatter?.paths) return false;
   return Array.isArray(frontmatter.paths) ? frontmatter.paths.length > 0 : true;
 }
 
@@ -1343,7 +1342,7 @@ app.get('/api/rules/match', (req, res) => {
   if (!filePath) return res.status(400).json({ error: 'file query param required' });
   const rules = getStack().filter(s => s.scope === 'rule');
   const matched = rules.filter(r => {
-    if (!r.frontmatter || !r.frontmatter.paths) return true;
+    if (!r.frontmatter?.paths) return true;
     const patterns = Array.isArray(r.frontmatter.paths) ? r.frontmatter.paths : [r.frontmatter.paths];
     return micromatch.isMatch(filePath, patterns);
   });
