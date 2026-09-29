@@ -2,6 +2,7 @@
 'use strict';
 
 const express = require('express');
+const hubSdk = require('./lib/vendor/claude-hub-sdk');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -608,20 +609,8 @@ app.use(net.frameGuard);
 app.use(net.originGuard);
 
 app.use(express.json());
-// A hub run from its repo passes its SDK source, so an SDK edit needs no sync.
-const sdkFile = process.env.HUB_SDK_SRC || path.join(__dirname, 'public/vendor/claude-hub-sdk.js');
-app.get('/vendor/claude-hub-sdk.js', (_req, res) => res.sendFile(sdkFile));
+hubSdk.mount(app, { publicDir: path.join(__dirname, 'public') });
 app.use(express.static(path.join(__dirname, 'public')));
-
-app.get('/hub-config', (_req, res) => {
-  res.json({
-    name: 'Memory Diagnoser',
-    icon: 'brain',
-    description: 'Explore Claude Code memory sources',
-    enabled: !!process.env.CLAUDE_HUB,
-    url: process.env.HUB_URL || null,
-  });
-});
 
 app.get('/api/project', (_req, res) => {
   res.json({ path: currentProjectPath, name: path.basename(currentProjectPath), configDir: CLAUDE_DIR });
