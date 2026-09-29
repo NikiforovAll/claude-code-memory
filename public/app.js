@@ -2180,21 +2180,11 @@ let lastAppliedProject = null;
     }
   }
 
-  // A ?project= link outranks the hub's project, which the hub posts again on every iframe load,
-  // until the hub moves to another one.
-  let linkPinned = !!new URLSearchParams(location.search).get('project');
-  let pinnedHubValue;
-
   hub.subscribe('project.changed', (p) => {
     const dirPath = typeof p?.project === 'string' && p.project ? p.project : null;
-    if (linkPinned) {
-      if (pinnedHubValue === undefined) pinnedHubValue = dirPath;
-      if (pinnedHubValue === dirPath) return;
-      linkPinned = false;
-    }
     if (!dirPath) return;
     hubProjectPath = dirPath;
-    applyProject(dirPath).catch((err) => console.warn('hub:project failed:', err.message));
+    applyProject(dirPath).catch((err) => console.warn('project.changed failed:', err.message));
   });
 
   // A link moves this app off the hub's project, and applyProject records that, so the next
@@ -2263,7 +2253,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const params = new URLSearchParams(location.search);
   let desiredProject = params.get('project');
   // A hub-pushed project outranks the localStorage recent: ClaudeHub.connect() is fire-and-forget at script
-  // eval, so hub:project can land before or during this block.
+  // eval, so project.changed can land before or during this block.
   await projectInfoPromise;
   if (!desiredProject) desiredProject = hubProjectPath || getRecentProjects()[0] || null;
   if (desiredProject) {

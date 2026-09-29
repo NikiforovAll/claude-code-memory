@@ -9,7 +9,7 @@ const read = (file) => readFileSync(path.join(__dirname, '..', file), 'utf8');
 const tick = () => new Promise((r) => setImmediate(r));
 
 // Runs the vendored SDK and the page's HUB_INTEGRATION region against stub browser globals.
-async function loadHub({ search = '' } = {}) {
+async function loadHub() {
   const region = /\/\/ #region HUB_INTEGRATION\n([\s\S]*?)\/\/ #endregion/.exec(read('public/app.js'))[1];
   const listeners = { keydown: [], message: [], load: [] };
   const on = (type, fn) => listeners[type]?.push(fn);
@@ -23,7 +23,7 @@ async function loadHub({ search = '' } = {}) {
     top: parent,
     URL,
     URLSearchParams,
-    location: { search },
+    location: { search: '' },
     console,
     document: { readyState: 'complete', addEventListener: on, body },
     addEventListener: on,
@@ -83,34 +83,26 @@ const project = (p) => ({ type: 'hub:event', topic: 'project.changed', payload: 
 const APPLIED = [['put', 'C:/p'], ['recent', 'C:/p'], ['project'], ['data']];
 
 describe('hub key forwarding', () => {
-  it('forwards the old set until the hub sends its keys', async () => {
+  it('forwards nothing until welcome', async () => {
     const hub = await loadHub();
-    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'q', code: 'KeyQ' }), true);
-    assert.equal(hub.press({ altKey: true, key: '7', code: 'Digit7' }), true);
-    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'ArrowLeft', code: 'ArrowLeft' }), true);
-    assert.equal(hub.press({ ctrlKey: true, key: 'q', code: 'KeyQ' }), false);
+    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'p', code: 'KeyP' }), false);
   });
 
-  for (const [label, message] of [
-    ['hub:keys', { type: 'hub:keys', keys: KEYS }],
-    ['welcome.forward', WELCOME],
-  ]) {
-    it(`forwards only the listed combos after ${label}`, async () => {
-      const hub = await loadHub();
-      await hub.receive(message);
-      assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'p', code: 'KeyP' }), true);
-      assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'π', code: 'KeyP' }), true);
-      assert.equal(hub.press({ altKey: true, key: '2', code: 'Digit2' }), true);
-      assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'q', code: 'KeyQ' }), false);
-      assert.equal(hub.press({ altKey: true, key: '3', code: 'Digit3' }), false);
-    });
-  }
-
-  it('ignores hub:keys from another origin or frame', async () => {
+  it('forwards only the listed combos after welcome', async () => {
     const hub = await loadHub();
-    await hub.receive({ type: 'hub:keys', keys: [] }, { origin: 'http://evil.example' });
-    await hub.receive({ type: 'hub:keys', keys: [] }, { source: {} });
-    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'q', code: 'KeyQ' }), true);
+    await hub.receive(WELCOME);
+    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'p', code: 'KeyP' }), true);
+    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'π', code: 'KeyP' }), true);
+    assert.equal(hub.press({ altKey: true, key: '2', code: 'Digit2' }), true);
+    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'q', code: 'KeyQ' }), false);
+    assert.equal(hub.press({ altKey: true, key: '3', code: 'Digit3' }), false);
+  });
+
+  it('ignores a welcome from another origin or frame', async () => {
+    const hub = await loadHub();
+    await hub.receive(WELCOME, { origin: 'http://evil.example' });
+    await hub.receive(WELCOME, { source: {} });
+    assert.equal(hub.press({ ctrlKey: true, altKey: true, key: 'p', code: 'KeyP' }), false);
   });
 });
 
@@ -154,27 +146,10 @@ describe('hub messages', () => {
     ]);
   });
 
-  it('keeps a ?project= link over the hub project until the hub moves', async () => {
-    const hub = await loadHub({ search: '?project=C%3A%2Fq' });
-    await hub.receive({ type: 'hub:project', project: 'C:/p', encoded: 'C--p', name: 'p' });
-    await hub.receive({ type: 'hub:project', project: 'C:/p', encoded: 'C--p', name: 'p' });
-    assert.equal(hub.hubProjectPath(), null);
-    await hub.receive({ type: 'hub:project', project: 'C:/r', encoded: 'C--r', name: 'r' });
-    await hub.receive({ type: 'hub:project', project: 'C:/p', encoded: 'C--p', name: 'p' });
-    assert.deepEqual(hub.calls, [
-      ['put', 'C:/r'],
-      ['recent', 'C:/r'],
-      ['project'],
-      ['data'],
-      ...APPLIED,
-    ]);
-  });
-
-  it('applies the legacy project and theme messages from a hub with no welcome', async () => {
+  it('ignores the v0 project and theme messages', async () => {
     const hub = await loadHub();
     await hub.receive({ type: 'hub:project', project: 'C:/p', encoded: 'C--p', name: 'p' });
-    await hub.receive({ type: 'hub:project', project: null, encoded: null, name: null });
     await hub.receive({ type: 'hub:theme', theme: 'light', colorTheme: 'nord' });
-    assert.deepEqual(hub.calls, [...APPLIED, ['color', 'nord'], ['toggle', 'light']]);
+    assert.deepEqual(hub.calls, []);
   });
 });
