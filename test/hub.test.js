@@ -51,7 +51,7 @@ async function loadHub() {
     },
   });
   context.window = context;
-  vm.runInContext(read('public/vendor/claude-hub-sdk.js'), context);
+  vm.runInContext(read('test/vendor/claude-hub-sdk.js'), context);
   vm.runInContext(region, context);
   await tick();
 
