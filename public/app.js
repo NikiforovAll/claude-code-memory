@@ -490,7 +490,7 @@ function buildHelpShortcuts() {
 function toggleHelpModal() {
   const list = document.getElementById('helpShortcuts');
   if (!list.childElementCount) list.innerHTML = buildHelpShortcuts();
-  list.classList.toggle('sc-standalone', !window.__HUB__?.enabled);
+  list.classList.toggle('sc-standalone', hub.status === 'standalone');
   document.getElementById('helpModal').classList.toggle('open');
 }
 
@@ -2137,117 +2137,39 @@ document.addEventListener('keydown', (e) => {
 
 // #region HUB_INTEGRATION
 
-(async function initHub() {
-  const cfg = await fetch('/hub-config')
-    .then((r) => r.json())
-    .catch(() => ({}));
-  if (!cfg.enabled) return;
-  window.__HUB__ = cfg;
-  // e.code travels with e.key because macOS composes Option+<key> into a character (Option+P is
-  // 'π'), so the key alone cannot identify the binding. The hub owns the keymap and normalizes;
-  // these tests only decide whether a press is the hub's to handle.
-  document.addEventListener('keydown', (e) => {
-    if (!isHubKey(e)) return;
-    e.preventDefault();
-    hubPost({ type: 'hub:keydown', key: e.key, code: e.code, ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey });
-  });
-})();
-
-// The combos the hub binds, from its hub:keys message. Null until one arrives: a hub from before
-// hub:keys sends none, and the fallback filter below is what such a hub expects.
-let hubKeys = null;
-
-// A copy of the hub's comboOf(): its names must match the hub:keys list.
-function hubCombo(e) {
-  const lower = (e.key || '').toLowerCase();
-  const m = /^(?:Key|Digit)([A-Z1-9])$/.exec(e.code || '');
-  const key = /^[a-z1-9]$/.test(lower) ? lower : m ? m[1].toLowerCase() : e.key;
-  const mods = [e.ctrlKey && 'ctrl', e.altKey && 'alt', e.shiftKey && 'shift', e.metaKey && 'meta'];
-  return [...mods, key].filter(Boolean).join('+');
-}
-
-function isHubKey(e) {
-  if (hubKeys) return hubKeys.has(hubCombo(e));
-  if (e.ctrlKey && e.altKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return true;
-  // Own branch: the Alt+digit case below requires !ctrlKey. The hub owns the Ctrl+Alt+letter
-  // keymap and ignores unbound letters.
-  if (e.ctrlKey && e.altKey && !e.shiftKey && !e.metaKey && (/^[a-z]$/i.test(e.key) || /^Key[A-Z]$/.test(e.code))) {
-    return true;
-  }
-  return e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey && (/^[1-9]$/.test(e.key) || /^Digit[1-9]$/.test(e.code));
-}
-
-function _hubNavigate(app, url) {
-  if (!window.__HUB__?.enabled) return;
-  hubPost({ type: 'hub:navigate', app, url });
-}
-
-// Hoisted out of initHubTheme so initHubProject can share it.
-const hubOrigin = () => (window.__HUB__?.url ? new URL(window.__HUB__.url).origin : null);
-
-// Every send is addressed to the hub explicitly. With targetOrigin '*' any page that
-// framed this app also received the forwarded keystrokes and navigation intents.
-function hubPost(message) {
-  const origin = hubOrigin();
-  if (origin) window.parent?.postMessage(message, origin);
-}
+const hub = ClaudeHub.connect();
 
 (function initHubTheme() {
   const getTheme = () => (document.body.classList.contains('light') ? 'light' : 'dark');
   const getColorTheme = () => document.body.dataset.colorTheme || 'ember';
-  // lastTheme/lastColorTheme are updated synchronously when applying a hub
-  // message, so the (async) observer sees no diff and doesn't echo it back.
-  let lastTheme = getTheme();
-  let lastColorTheme = getColorTheme();
-  window.addEventListener('message', (e) => {
-    if (e.source !== window.parent || e.origin !== hubOrigin()) return;
-    if (e.data?.type !== 'hub:theme') return;
-    if (typeof e.data.colorTheme === 'string' && e.data.colorTheme !== getColorTheme()) {
-      setColorTheme(e.data.colorTheme);
-      lastColorTheme = getColorTheme();
-    }
-    if (getTheme() !== e.data.theme) {
-      window.toggleTheme();
-      lastTheme = getTheme();
-    }
+  const report = hub.bindTheme({
+    get: () => ({ theme: getTheme(), colorTheme: getColorTheme() }),
+    set: ({ theme, colorTheme }) => {
+      if (colorTheme !== getColorTheme()) setColorTheme(colorTheme);
+      if (theme !== getTheme()) window.toggleTheme();
+    },
   });
-  new MutationObserver(() => {
-    const t = getTheme();
-    const ct = getColorTheme();
-    if (t === lastTheme && ct === lastColorTheme) return;
-    lastTheme = t;
-    lastColorTheme = ct;
-    hubPost({ type: 'hub:theme', theme: t, colorTheme: ct });
-  }).observe(document.body, {
+  new MutationObserver(report).observe(document.body, {
     attributes: true,
     attributeFilter: ['class', 'data-color-theme'],
-  });
-})();
-
-(function initHubKeys() {
-  window.addEventListener('message', (e) => {
-    if (e.source !== window.parent || e.origin !== hubOrigin()) return;
-    if (e.data?.type !== 'hub:keys' || !Array.isArray(e.data.keys)) return;
-    hubKeys = new Set(e.data.keys.filter((k) => typeof k === 'string'));
   });
 })();
 
 // Set synchronously when the hub pushes a project, so the DOMContentLoaded restore below can't
 // let a stale localStorage recent win the race against the hub's choice.
 let hubProjectPath = null;
+// Shared with the DOMContentLoaded restore so a boot restore and a hub push never apply the same project twice.
+let lastAppliedProject = null;
 
 (function initHubProject() {
-  let lastApplied = null;
-  window.addEventListener('message', async (e) => {
-    if (e.source !== window.parent || e.origin !== hubOrigin()) return;
-    if (e.data?.type !== 'hub:project') return;
-    const dirPath = e.data.project;
+  hub.subscribe('project.changed', async (p) => {
+    const dirPath = p?.project;
     if (typeof dirPath !== 'string' || !dirPath) return;
     hubProjectPath = dirPath;
     // Dedupes against the last applied value, not just an in-flight one: the hub re-posts on
     // every iframe load, so without this each load would PUT and reload twice.
-    if (lastApplied === dirPath) return;
-    lastApplied = dirPath;
+    if (lastAppliedProject === dirPath) return;
+    lastAppliedProject = dirPath;
     try {
       await putProject(dirPath);
       // The hub does not persist its own scope, so a hub-pushed project must become the recent
@@ -2256,7 +2178,7 @@ let hubProjectPath = null;
       addRecentProject(dirPath);
       await Promise.all([loadProject(), loadData()]);
     } catch (err) {
-      lastApplied = null;
+      lastAppliedProject = null;
       console.warn('hub:project failed:', err.message);
     }
   });
@@ -2320,11 +2242,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Handle ?project= query param, else restore last-used project from localStorage
   const params = new URLSearchParams(location.search);
   let desiredProject = params.get('project');
-  // A hub-pushed project outranks the localStorage recent: initHub() is fire-and-forget at script
+  // A hub-pushed project outranks the localStorage recent: ClaudeHub.connect() is fire-and-forget at script
   // eval, so hub:project can land before or during this block.
   await projectInfoPromise;
   if (!desiredProject) desiredProject = hubProjectPath || getRecentProjects()[0] || null;
   if (desiredProject) {
+    // Set before the PUT: the hub's push can land while it is in flight.
+    lastAppliedProject = desiredProject;
     try {
       await putProject(desiredProject);
     } catch {
