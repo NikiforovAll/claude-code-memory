@@ -9,7 +9,7 @@ const read = (file) => readFileSync(path.join(__dirname, '..', file), 'utf8');
 const tick = () => new Promise((r) => setImmediate(r));
 
 // Runs the vendored SDK and the page's HUB_INTEGRATION region against stub browser globals.
-async function loadHub() {
+async function loadHub({ search = '' } = {}) {
   const region = /\/\/ #region HUB_INTEGRATION\n([\s\S]*?)\/\/ #endregion/.exec(read('public/app.js'))[1];
   const listeners = { keydown: [], message: [], load: [] };
   const on = (type, fn) => listeners[type]?.push(fn);
@@ -22,6 +22,8 @@ async function loadHub() {
     parent,
     top: parent,
     URL,
+    URLSearchParams,
+    location: { search },
     console,
     document: { readyState: 'complete', addEventListener: on, body },
     addEventListener: on,
@@ -31,7 +33,11 @@ async function loadHub() {
     MutationObserver: class {
       observe() {}
     },
-    putProject: async (p) => calls.push(['put', p]),
+    putProject: async (p) => {
+      calls.push(['put', p]);
+      if (p === 'C:/missing') throw new Error('not a directory');
+    },
+    showToast: (text, kind) => calls.push(['toast', text, kind]),
     addRecentProject: (p) => calls.push(['recent', p]),
     loadProject: async () => calls.push(['project']),
     loadData: async () => calls.push(['data']),
@@ -124,6 +130,44 @@ describe('hub messages', () => {
     await hub.receive({ type: 'hub:event', topic: 'theme.changed', payload: { theme: 'light', colorTheme: 'nord' } });
     assert.equal(hub.hubProjectPath(), 'C:/p');
     assert.deepEqual(hub.calls, [...APPLIED, ['color', 'nord'], ['toggle', 'light']]);
+  });
+
+  it('opens the project.memory project in place, and the next project.changed still applies', async () => {
+    const hub = await loadHub();
+    await hub.receive(WELCOME);
+    await hub.receive(project('C:/p'));
+    const action = (params) => hub.receive({ type: 'hub:action', id: 'a', action: 'project.memory', params });
+    await action({ project: 'C:/q' });
+    await action({});
+    await action({ project: 'C:/missing' });
+    await hub.receive(project('C:/p'));
+    assert.equal(hub.hubProjectPath(), 'C:/p');
+    assert.deepEqual(hub.calls, [
+      ...APPLIED,
+      ['put', 'C:/q'],
+      ['recent', 'C:/q'],
+      ['project'],
+      ['data'],
+      ['put', 'C:/missing'],
+      ['toast', 'Failed to switch project', 'error'],
+      ...APPLIED,
+    ]);
+  });
+
+  it('keeps a ?project= link over the hub project until the hub moves', async () => {
+    const hub = await loadHub({ search: '?project=C%3A%2Fq' });
+    await hub.receive({ type: 'hub:project', project: 'C:/p', encoded: 'C--p', name: 'p' });
+    await hub.receive({ type: 'hub:project', project: 'C:/p', encoded: 'C--p', name: 'p' });
+    assert.equal(hub.hubProjectPath(), null);
+    await hub.receive({ type: 'hub:project', project: 'C:/r', encoded: 'C--r', name: 'r' });
+    await hub.receive({ type: 'hub:project', project: 'C:/p', encoded: 'C--p', name: 'p' });
+    assert.deepEqual(hub.calls, [
+      ['put', 'C:/r'],
+      ['recent', 'C:/r'],
+      ['project'],
+      ['data'],
+      ...APPLIED,
+    ]);
   });
 
   it('applies the legacy project and theme messages from a hub with no welcome', async () => {
