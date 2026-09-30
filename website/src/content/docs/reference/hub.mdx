@@ -18,7 +18,7 @@ The hub starts the app as a child process and sets these environment variables:
 - `HUB_URL` gives the hub address.
 - `CLAUDE_CONFIG_DIR` gives the hub's active config dir.
 
-The app reads them at startup. `GET /hub-config` then returns `enabled: true` and the hub URL. The browser code reads this endpoint and turns on the hub features below only when `enabled` is true.
+The app reads them at startup. The hub also gives the app its SDK, which adds `GET /hub-config`. It returns `enabled: true` and the hub URL. The browser code reads this endpoint and turns on the hub features below only when `enabled` is true. Standalone, the app has no `/hub-config` route and uses a stub of the SDK that talks to no hub. See [Hub protocol v1](https://nikiforovall.blog/claude-code-hub/reference/protocol/).
 
 ## Project sync
 
