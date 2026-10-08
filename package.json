@@ -1,6 +1,6 @@
 {
   "name": "claude-code-memory-explorer",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Memory explorer dashboard for Claude Code",
   "main": "server.js",
   "type": "commonjs",
