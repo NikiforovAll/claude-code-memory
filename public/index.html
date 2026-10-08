@@ -27,7 +27,7 @@
 <body>
 <script src="/vendor/claude-hub-sdk.js"></script>
   <div class="topbar">
-    <div class="topbar-logo">
+    <div class="topbar-logo" onclick="_goUserHome()" title="User home">
       <div class="logo-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"/><path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"/></svg></div>
       <span class="logo-text">Memory Diagnoser</span>
     </div>
@@ -69,6 +69,8 @@
       <div class="budget-segments" id="budgetSegments"></div>
     </div>
   </div>
+
+  <div class="home-view" id="homeView"></div>
 
   <!-- Main layout -->
   <div class="main-layout">

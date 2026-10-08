@@ -38,6 +38,7 @@ const projectDirArg = getArg('project');
 
 // #region STATE
 
+// null is the user scope: only the sources every session loads, whatever the project.
 let currentProjectPath = projectDirArg ? path.resolve(expandHome(projectDirArg)) : process.cwd();
 
 const cache = {};
@@ -214,6 +215,19 @@ function spreadImports(filePath, content) {
   return { imports: resolved, softImports: resolvedSoft, unresolvedImports: unresolved };
 }
 
+function fmName(info) {
+  const n = info.frontmatter?.name;
+  return typeof n === 'string' ? n : '';
+}
+
+// A skill's name + description ride the system prompt every session (unless model
+// invocation is disabled) — that is its standing cost, not the on-demand body.
+// A subagent's name + description ride the Agent tool's listing the same way.
+function descChars(name, info) {
+  const desc = info.frontmatter?.description;
+  return name.length + (typeof desc === 'string' ? desc.trim().length : 0);
+}
+
 function hasPathsFilter(frontmatter) {
   if (!frontmatter?.paths) return false;
   return Array.isArray(frontmatter.paths) ? frontmatter.paths.length > 0 : true;
@@ -269,7 +283,7 @@ function discoverMemorySources(projectPath) {
   }
 
   // 4. Walk up from projectPath to find CLAUDE.md and CLAUDE.local.md
-  const ancestors = getAncestorDirs(projectPath);
+  const ancestors = projectPath ? getAncestorDirs(projectPath) : [];
   const seenPaths = new Set(sources.map(s => s.path));
   for (const dir of ancestors) {
     const isProjectRoot = path.resolve(dir) === path.resolve(projectPath);
@@ -327,11 +341,11 @@ function discoverMemorySources(projectPath) {
       walkForClaudeMd(subdir, depth + 1);
     }
   }
-  walkForClaudeMd(projectPath, 0);
+  if (projectPath) walkForClaudeMd(projectPath, 0);
 
   // 5. Project rules (.claude/rules/*.md)
-  const projectRulesDir = path.join(projectPath, '.claude', 'rules');
-  if (fs.existsSync(projectRulesDir)) {
+  const projectRulesDir = projectPath && path.join(projectPath, '.claude', 'rules');
+  if (projectRulesDir && fs.existsSync(projectRulesDir)) {
     for (const file of findMdFiles(projectRulesDir)) {
       const info = fileInfo(file);
       if (!info) continue;
@@ -352,7 +366,7 @@ function discoverMemorySources(projectPath) {
     const info = fileInfo(file);
     if (!info) return;
     const dirName = path.basename(path.dirname(file));
-    const skillName = (info.frontmatter && typeof info.frontmatter.name === 'string' && info.frontmatter.name) || dirName;
+    const skillName = fmName(info) || dirName;
     const display = extra.nestedRel ? `${extra.nestedRel}:${skillName}` : skillName;
     sources.push({
       id: `skill-${skillSource}-${slug(file)}`,
@@ -361,14 +375,38 @@ function discoverMemorySources(projectPath) {
       load: 'ondemand',
       skillSource,
       skillName,
+      descChars: info.frontmatter?.['disable-model-invocation'] === 'true' ? null : descChars(skillName, info),
       ...extra,
       ...info,
       ...spreadImports(info.path, info.content),
     });
   }
-  for (const file of findSkillFiles(path.join(projectPath, '.claude', 'skills'))) pushSkill(file, 'project');
+  for (const file of findSkillFiles(path.join(CLAUDE_DIR, 'skills'))) pushSkill(file, 'user');
+  if (projectPath) {
+    for (const file of findSkillFiles(path.join(projectPath, '.claude', 'skills'))) pushSkill(file, 'project');
+  }
   for (const { dir, rel } of nestedSkillDirs) {
     for (const file of findSkillFiles(dir)) pushSkill(file, 'project', { nestedRel: rel });
+  }
+
+  // 5c. Subagent definitions: the description is listed in every session, the body loads when the agent runs
+  const agentRoots = [{ root: path.join(CLAUDE_DIR, 'agents'), agentSource: 'user' }];
+  if (projectPath) agentRoots.push({ root: path.join(projectPath, '.claude', 'agents'), agentSource: 'project' });
+  for (const { root, agentSource } of agentRoots) {
+    for (const file of findMdFiles(root)) {
+      const info = fileInfo(file);
+      if (!info) continue;
+      const name = fmName(info) || path.basename(file, '.md');
+      sources.push({
+        id: `agent-${agentSource}-${slug(file)}`,
+        name,
+        scope: 'agent',
+        load: 'ondemand',
+        agentSource,
+        descChars: descChars(name, info),
+        ...info,
+      });
+    }
   }
 
   function pushMemoryDir(dir, scope, idPrefix, extraFields = {}) {
@@ -404,7 +442,7 @@ function discoverMemorySources(projectPath) {
   }
 
   // 6. Auto memory (projects base honors `autoMemoryDirectory` user setting)
-  const memoryDir = findMemoryDir(projectPath);
+  const memoryDir = projectPath && findMemoryDir(projectPath);
   if (memoryDir && fs.existsSync(memoryDir)) {
     pushMemoryDir(memoryDir, 'memory', 'memory');
   }
@@ -413,11 +451,13 @@ function discoverMemorySources(projectPath) {
   //    user:    ~/.claude/agent-memory/<agent>/
   //    project: <project>/.claude/agent-memory/<agent>/
   //    local:   <project>/.claude/agent-memory-local/<agent>/
-  const agentMemoryRoots = [
-    { root: path.join(CLAUDE_DIR, 'agent-memory'), agentScope: 'user' },
-    { root: path.join(projectPath, '.claude', 'agent-memory'), agentScope: 'project' },
-    { root: path.join(projectPath, '.claude', 'agent-memory-local'), agentScope: 'local' },
-  ];
+  const agentMemoryRoots = [{ root: path.join(CLAUDE_DIR, 'agent-memory'), agentScope: 'user' }];
+  if (projectPath) {
+    agentMemoryRoots.push(
+      { root: path.join(projectPath, '.claude', 'agent-memory'), agentScope: 'project' },
+      { root: path.join(projectPath, '.claude', 'agent-memory-local'), agentScope: 'local' },
+    );
+  }
   for (const { root, agentScope } of agentMemoryRoots) {
     let agentDirs;
     try { agentDirs = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
@@ -437,8 +477,9 @@ function discoverMemorySources(projectPath) {
     ...(s.imports || []).map(imp => ({ imp, parent: s, hard: true })),
     ...(s.softImports || []).map(imp => ({ imp, parent: s, hard: false })),
   ]);
+  // https://code.claude.com/docs/en/memory: imports nest up to four hops.
   let depth = 0;
-  while (queue.length && depth < 5) {
+  while (queue.length && depth < 4) {
     const batch = queue.splice(0, queue.length);
     for (const { imp, parent, hard } of batch) {
       if (seen.has(imp)) {
@@ -476,8 +517,16 @@ function discoverMemorySources(projectPath) {
   return sources;
 }
 
-function findSkillFiles(root) {
-  return findMdFiles(root, { name: 'SKILL.md', maxDepth: 4 });
+// A SKILL.md inside a skill's folder (templates, examples) is not a skill of its own.
+function findSkillFiles(dir, depth = 0) {
+  let entries;
+  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return []; }
+  if (entries.some((e) => e.isFile() && e.name === 'SKILL.md')) return [path.join(dir, 'SKILL.md')];
+  if (depth >= 4) return [];
+  // Claude Code parks removed synced skills in skills/.trash/ and does not load them.
+  return entries
+    .filter((e) => e.isDirectory() && !e.name.startsWith('.'))
+    .flatMap((e) => findSkillFiles(path.join(dir, e.name), depth + 1));
 }
 
 function findMdFiles(dir, opts = {}, depth = 0) {
@@ -553,11 +602,9 @@ function encodeProjectPath(projectPath) {
     .replace(/\//g, '-');
 }
 
-// User-scope `autoMemoryDirectory` only — Claude Code rejects this key from project/local settings for security.
+// Managed, then user `autoMemoryDirectory` — Claude Code rejects this key from project/local settings for security.
 function getProjectsBaseDir() {
-  let settings = {};
-  try { settings = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf-8')); } catch { /* no settings */ }
-  const raw = settings.autoMemoryDirectory;
+  const raw = readJson(managedSettingsPath())?.autoMemoryDirectory || readJson(USER_SETTINGS_PATH)?.autoMemoryDirectory;
   if (typeof raw === 'string' && raw.trim()) return path.resolve(expandHome(raw));
   return path.join(CLAUDE_DIR, 'projects');
 }
@@ -612,20 +659,33 @@ app.use(express.json());
 if (process.env.HUB_SDK_SERVER) require(process.env.HUB_SDK_SERVER).mount(app);
 app.use(express.static(path.join(__dirname, 'public')));
 
+function projectInfo() {
+  const p = currentProjectPath;
+  return { path: p, name: p ? path.basename(p) : 'User', user: !p, configDir: CLAUDE_DIR };
+}
+
 app.get('/api/project', (_req, res) => {
-  res.json({ path: currentProjectPath, name: path.basename(currentProjectPath), configDir: CLAUDE_DIR });
+  res.json(projectInfo());
 });
 
+// Body: {path} opens a project, {user: true} the user scope.
 app.put('/api/project', (req, res) => {
-  const { path: dirPath } = req.body;
+  const { path: dirPath, user } = req.body || {};
+  if (user === true) {
+    if (currentProjectPath) {
+      currentProjectPath = null;
+      clearCache();
+    }
+    return res.json(projectInfo());
+  }
   if (!dirPath) return res.status(400).json({ error: 'path required' });
   const resolved = path.resolve(expandHome(dirPath));
   if (!fs.existsSync(resolved)) return res.status(404).json({ error: 'directory not found' });
-  if (resolved !== path.resolve(currentProjectPath)) {
+  if (!currentProjectPath || resolved !== path.resolve(currentProjectPath)) {
     currentProjectPath = resolved;
     clearCache();
   }
-  res.json({ path: currentProjectPath, name: path.basename(currentProjectPath) });
+  res.json(projectInfo());
 });
 
 app.post('/api/refresh', (_req, res) => {
@@ -636,11 +696,8 @@ app.post('/api/refresh', (_req, res) => {
 function resolveAllowedPath(filePath) {
   if (!filePath) return { error: { status: 400, message: 'path required' } };
   const resolved = path.resolve(expandHome(filePath));
-  const roots = [
-    path.resolve(CLAUDE_DIR),
-    path.resolve(currentProjectPath),
-    getProjectsBaseDir(),
-  ];
+  const roots = [path.resolve(CLAUDE_DIR), getProjectsBaseDir()];
+  if (currentProjectPath) roots.push(path.resolve(currentProjectPath));
   const inRoot = roots.some((r) => resolved === r || resolved.startsWith(r + path.sep));
   if (!inRoot) return { error: { status: 403, message: 'path outside allowed roots' } };
   return { resolved };
@@ -1089,7 +1146,8 @@ function selectAnalysisSources(stack, ids) {
     const wanted = new Set(ids);
     return all.filter((s) => wanted.has(s.id));
   }
-  return all.filter((s) => s.scope === 'memory');
+  // The user scope has no auto memory, so its default is the user CLAUDE.md.
+  return all.filter((s) => s.scope === (currentProjectPath ? 'memory' : 'user'));
 }
 
 function scopeDescription(selected) {
@@ -1108,12 +1166,17 @@ function scopeDescription(selected) {
   return parts.join(' + ');
 }
 
+// The user scope has no project entry: its runs are the shared user-scope entry's.
+const analysisProject = () => currentProjectPath || USER_SCOPE;
+
 app.get('/api/memory/analysis', (_req, res) => {
-  const st = getAnalysisState(currentProjectPath);
-  const running = st.pending.some((p) => !p.stalled);
   // The shared user-scope entry rides along on every project's payload; its
   // staleness tracks the user CLAUDE.md itself, independent of the project.
   const us = getAnalysisState(USER_SCOPE);
+  const st = currentProjectPath
+    ? getAnalysisState(currentProjectPath)
+    : { ...EMPTY_ANALYSIS, pending: us.pending, error: us.error };
+  const running = st.pending.some((p) => !p.stalled);
   // Staleness needs a full stack scan + content hash — skip it while a run is in
   // flight (the client polls every 2.5s and stale is meaningless mid-run anyway).
   let stale = false;
@@ -1126,8 +1189,8 @@ app.get('/api/memory/analysis', (_req, res) => {
       stale = st.hash !== hash;
     }
     if (us.result) {
-      const userSrc = stack.find((s) => s.id === 'user-claude-md');
-      userStale = us.hash !== (userSrc ? memoryContentHash([userSrc]) : null);
+      const selected = us.ids ? selectAnalysisSources(stack, us.ids) : [];
+      userStale = us.hash !== (selected.length ? memoryContentHash(selected) : null);
     }
   }
   res.json({
@@ -1146,7 +1209,7 @@ app.get('/api/memory/analysis', (_req, res) => {
 // scope:'user' targets the shared user-scope entry, so the action holds across
 // projects; anything else targets the current project's entry.
 function analysisTarget(req) {
-  return req.body?.scope === 'user' ? USER_SCOPE : currentProjectPath;
+  return req.body?.scope === 'user' ? USER_SCOPE : analysisProject();
 }
 
 app.post('/api/memory/analysis/delete-run', (req, res) => {
@@ -1176,7 +1239,7 @@ app.post('/api/memory/analysis/dismiss', (req, res) => {
 });
 
 app.post('/api/memory/analyze', (req, res) => {
-  const prev = getAnalysisState(currentProjectPath);
+  const prev = getAnalysisState(analysisProject());
   const stack = getStack();
   const ids = req.body?.ids;
   const selected = selectAnalysisSources(stack, ids);
@@ -1198,13 +1261,16 @@ app.post('/api/memory/analyze', (req, res) => {
   const claudeMdSources = selected.filter((s) => CLAUDE_MD_SCOPES.has(s.scope));
   const userSrc = userSelected || stack.find((s) => s.id === 'user-claude-md');
   const prompt = buildAnalyzePrompt(memSources, skills, agentSources, claudeMdSources, userSrc, !!userSelected);
-  const stateIds = Array.isArray(ids) && ids.length ? ids : null;
+  // The user entry is also read from projects, where the default selection differs, so it keeps its ids.
+  const stateIds = Array.isArray(ids) && ids.length ? ids : currentProjectPath ? null : selected.map((s) => s.id);
   const model = ANALYSIS_MODELS.has(req.body?.model) ? req.body.model : null;
   // Capture the project now — the user may switch projects while the run is in flight,
   // and the result must land under the project it was computed for.
-  const project = currentProjectPath;
+  const project = analysisProject();
   const runId = crypto.randomUUID();
   const scopeDesc = scopeDescription(selected);
+  // In the user scope the run already lands in the user entry, so there is nothing to split off.
+  const splitUser = !!userSelected && project !== USER_SCOPE;
   saveAnalysisState(project, {
     ...prev,
     // Starting a fresh run retires stalled leftovers — the user has moved on.
@@ -1216,12 +1282,12 @@ app.post('/api/memory/analyze', (req, res) => {
   // file is owned by the user-scope entry's snapshot, not the project's.
   // Snapshotting up front also keeps `selected` (full file contents) out of the
   // completion closure, which can live for hours on a run that never returns.
-  const audited = selected.filter((s) => s.scope !== 'user').map((s) => ({ id: s.id, name: s.name, scope: s.scope, lines: s.lines }));
+  const audited = selected.filter((s) => !splitUser || s.scope !== 'user').map((s) => ({ id: s.id, name: s.name, scope: s.scope, lines: s.lines }));
   const userAudited = userSelected ? [{ id: userSelected.id, name: userSelected.name, scope: 'user', lines: userSelected.lines }] : null;
   const userId = userSelected?.id || null;
   // Prepend a run to an entry's history, newest first, capped.
   const withRun = (cur, run) => [run, ...(cur.runs || [])].slice(0, MAX_ANALYSIS_RUNS);
-  runClaudeAnalysis(prompt, model, userOnly ? os.homedir() : project).then((r) => {
+  runClaudeAnalysis(prompt, model, userOnly || project === USER_SCOPE ? os.homedir() : project).then((r) => {
     const ts = Date.now();
     let result = r.ok ? { ...r.data, costUsd: r.costUsd, durationMs: r.durationMs, scopeDesc, model } : null;
     if (result) {
@@ -1232,7 +1298,7 @@ app.post('/api/memory/analyze', (req, res) => {
     }
     // Findings about the user CLAUDE.md alone are shared across projects: split them
     // into the user-scope entry; project and cross findings stay with the project.
-    if (result && userId) {
+    if (result && splitUser) {
       const all = result.findings;
       const uCur = getAnalysisState(USER_SCOPE);
       const uRun = {
@@ -1247,7 +1313,7 @@ app.post('/api/memory/analyze', (req, res) => {
     }
     // Re-read from disk — parallel runs or another instance may have finished meanwhile.
     const cur = getAnalysisState(project);
-    const runs = result && !userOnly ? withRun(cur, { result, ts, hash, ids: stateIds, audited }) : cur.runs || [];
+    const runs = result && !(userOnly && splitUser) ? withRun(cur, { result, ts, hash, ids: stateIds, audited }) : cur.runs || [];
     saveAnalysisState(project, {
       ...cur,
       pending: cur.pending.filter((p) => p.id !== runId),
@@ -1269,13 +1335,15 @@ app.post('/api/open-in-editor', (req, res) => {
   }
 });
 
-// A skill's name + description ride the system prompt every session (unless model
-// invocation is disabled) — that is its standing cost, not the on-demand body.
-function skillDescMeta(source) {
-  const fm = source.frontmatter || {};
-  if (fm['disable-model-invocation'] === 'true') return null;
-  const desc = typeof fm.description === 'string' ? fm.description : '';
-  return { chars: (source.skillName || source.name || '').length + desc.trim().length };
+// Claude Code lists one definition per name: a user skill wins over a project skill, a project
+// agent over a user agent. The stack holds user definitions before project ones.
+function descTotal(stack, scope) {
+  const byName = new Map();
+  for (const s of stack) {
+    if (s.scope !== scope || s.descChars == null) continue;
+    if (scope === 'agent' || !byName.has(s.name)) byName.set(s.name, s.descChars);
+  }
+  return { count: byName.size, chars: [...byName.values()].reduce((n, c) => n + c, 0) };
 }
 
 app.get('/api/summary', (_req, res) => {
@@ -1294,7 +1362,7 @@ app.get('/api/summary', (_req, res) => {
       if (s.parentId && treeIds.has(s.parentId) && !treeIds.has(s.id)) { treeIds.add(s.id); grew = true; }
     }
   }
-  const sources = stack.filter(s => s.scope !== 'skill' && s.load !== 'link' && !treeIds.has(s.id)
+  const sources = stack.filter(s => s.scope !== 'skill' && s.scope !== 'agent' && s.load !== 'link' && !treeIds.has(s.id)
     && !((s.scope === 'memory' || s.scope === 'agent-memory') && s.load === 'ondemand'));
   const totalFiles = sources.length;
   const totalLines = sources.reduce((s, f) => s + (f.lines || 0), 0);
@@ -1302,16 +1370,94 @@ app.get('/api/summary', (_req, res) => {
   const alwaysLoaded = sources.filter(s => s.load === 'always' || s.load === 'startup').length;
   const conditional = sources.filter(s => s.load === 'conditional').length;
   const onDemand = sources.filter(s => s.load === 'ondemand').length;
-  const skillDescs = stack.filter(s => s.scope === 'skill').map(skillDescMeta).filter(Boolean);
-  const skillDesc = { count: skillDescs.length, chars: skillDescs.reduce((s, d) => s + d.chars, 0) };
+  const skillDesc = descTotal(stack, 'skill');
+  const agentDesc = descTotal(stack, 'agent');
   // Per-scope char totals so the client budget bar shares this exact footprint filter
   const scopeChars = {};
   for (const f of sources) scopeChars[f.scope] = (scopeChars[f.scope] || 0) + (f.chars || 0);
-  const totalChars = sources.reduce((s, f) => s + (f.chars || 0), 0) + skillDesc.chars;
+  const totalChars = sources.reduce((s, f) => s + (f.chars || 0), 0) + skillDesc.chars + agentDesc.chars;
   // ids: which sources make up the footprint, so the client can highlight them
   // userClaudeMd: where the user-level file lives even when it does not exist yet, so the
   // client can name it in fix prompts without assuming ~/.claude
-  res.json({ totalFiles, totalLines, totalBytes, totalChars, scopeChars, skillDesc, alwaysLoaded, conditional, onDemand, ids: sources.map(s => s.id), userClaudeMd: USER_CLAUDE_MD });
+  res.json({ totalFiles, totalLines, totalBytes, totalChars, scopeChars, skillDesc, agentDesc, alwaysLoaded, conditional, onDemand, ids: sources.map(s => s.id), userClaudeMd: USER_CLAUDE_MD });
+});
+
+const MANAGED_SETTINGS_PATH = path.join(path.dirname(MANAGED_POLICY_PATHS[0]), 'managed-settings.json');
+// Claude Code caches server-managed settings (claude.ai admin console) in the config dir. Within the
+// managed tier they win over the system file, and the sources do not merge.
+const REMOTE_SETTINGS_PATH = path.join(CLAUDE_DIR, 'remote-settings.json');
+const USER_SETTINGS_PATH = path.join(CLAUDE_DIR, 'settings.json');
+const managedSettingsPath = () => (fs.existsSync(REMOTE_SETTINGS_PATH) ? REMOTE_SETTINGS_PATH : MANAGED_SETTINGS_PATH);
+
+function readJson(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+// Managed settings override user settings; project and local settings are out of the user scope.
+function effectiveSetting(layers, key, fallback) {
+  for (const { from, data } of layers) {
+    if (data && data[key] !== undefined) return { value: data[key], from };
+  }
+  return { value: fallback, from: 'default' };
+}
+
+function findOutputStyleFile(name) {
+  const want = String(name).toLowerCase();
+  const files = findMdFiles(path.join(CLAUDE_DIR, 'output-styles'));
+  const byBase = files.find((f) => path.basename(f, '.md').toLowerCase() === want);
+  if (byBase) return fileInfo(byBase);
+  for (const file of files) {
+    const info = fileInfo(file);
+    if (info && fmName(info).toLowerCase() === want) return info;
+  }
+  return null;
+}
+
+function discoverHome() {
+  const managedPath = managedSettingsPath();
+  const managed = readJson(managedPath);
+  const user = readJson(USER_SETTINGS_PATH);
+  const layers = [
+    { from: 'managed', data: managed },
+    { from: 'user', data: user },
+  ];
+  const style = effectiveSetting(layers, 'outputStyle', 'default');
+  const styleFile = style.from === 'default' ? null : findOutputStyleFile(style.value);
+  const envLayers = [
+    { from: 'managed', data: managed?.env },
+    { from: 'user', data: user?.env },
+    { from: 'env', data: process.env },
+  ];
+  return {
+    settingsPaths: { user: USER_SETTINGS_PATH, managed: managedPath },
+    managed: {
+      source: managedPath === REMOTE_SETTINGS_PATH ? 'server' : 'file',
+      keys: managed && typeof managed === 'object' ? Object.keys(managed) : null,
+      claudeMdChars: typeof managed?.claudeMd === 'string' ? managed.claudeMd.length : null,
+    },
+    outputStyle: {
+      name: style.value,
+      from: style.from,
+      path: styleFile?.path || null,
+      chars: styleFile?.chars ?? null,
+      keepCodingInstructions: styleFile?.frontmatter?.['keep-coding-instructions'] ?? null,
+    },
+    settings: {
+      autoMemoryEnabled: effectiveSetting(layers, 'autoMemoryEnabled', true),
+      autoMemoryDirectory: effectiveSetting(layers, 'autoMemoryDirectory', null),
+      claudeMdExcludes: effectiveSetting(layers, 'claudeMdExcludes', []),
+      cleanupPeriodDays: effectiveSetting(layers, 'cleanupPeriodDays', 30),
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: effectiveSetting(envLayers, 'CLAUDE_CODE_DISABLE_AUTO_MEMORY', null),
+    },
+  };
+}
+
+app.get('/api/home', (_req, res) => {
+  res.json(cached('home', discoverHome));
 });
 
 app.get('/api/stack', (_req, res) => {
@@ -1355,7 +1501,7 @@ app.get('/api/file', (req, res) => {
 app.get('/api/imports', (req, res) => {
   const filePath = req.query.path;
   if (!filePath) return res.status(400).json({ error: 'path query param required' });
-  const maxDepth = 5;
+  const maxDepth = 4;
   const chain = [];
   const visited = new Set();
 
@@ -1364,7 +1510,7 @@ app.get('/api/imports', (req, res) => {
     visited.add(fp);
     const info = fileInfo(fp);
     if (!info) { chain.push({ path: fp, error: 'not found' }); return; }
-    const imports = parseImports(info.content);
+    const { imports } = parseImports(info.content);
     const node = { path: fp, lines: info.lines, bytes: info.bytes, imports: [] };
     chain.push(node);
     for (const imp of imports) {

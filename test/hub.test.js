@@ -9,7 +9,7 @@ const read = (file) => readFileSync(path.join(__dirname, '..', file), 'utf8');
 const tick = () => new Promise((r) => setImmediate(r));
 
 // Runs the vendored SDK and the page's HUB_INTEGRATION region against stub browser globals.
-async function loadHub() {
+async function loadHub({ userRemembered = false } = {}) {
   const region = /\/\/ #region HUB_INTEGRATION\n([\s\S]*?)\/\/ #endregion/.exec(read('public/app.js'))[1];
   const listeners = { keydown: [], message: [], load: [] };
   const on = (type, fn) => listeners[type]?.push(fn);
@@ -39,6 +39,7 @@ async function loadHub() {
     },
     showToast: (text, kind) => calls.push(['toast', text, kind]),
     addRecentProject: (p) => calls.push(['recent', p]),
+    isUserScopeRemembered: async () => userRemembered,
     loadProject: async () => calls.push(['project']),
     loadData: async () => calls.push(['data']),
     setColorTheme: (id) => {
@@ -144,6 +145,25 @@ describe('hub messages', () => {
       ['toast', 'Failed to switch project', 'error'],
       ...APPLIED,
     ]);
+  });
+
+  it('keeps a remembered user scope over the replay, and a live change leaves it', async () => {
+    const hub = await loadHub({ userRemembered: true });
+    await hub.receive(WELCOME);
+    await hub.receive(project('C:/p'));
+    assert.equal(hub.hubProjectPath(), null);
+    assert.deepEqual(hub.calls, []);
+    await hub.receive({ type: 'hub:active', active: true });
+    await hub.receive(project('C:/p'));
+    assert.equal(hub.hubProjectPath(), 'C:/p');
+    assert.deepEqual(hub.calls, APPLIED);
+  });
+
+  it('applies the replay when the user scope is not remembered', async () => {
+    const hub = await loadHub();
+    await hub.receive(WELCOME);
+    await hub.receive(project('C:/p'));
+    assert.deepEqual(hub.calls, APPLIED);
   });
 
   it('ignores the v0 project and theme messages', async () => {

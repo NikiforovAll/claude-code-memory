@@ -5,6 +5,10 @@ let stackData = [];
 let summaryData = null;
 let selectedFileId = null;
 let healthViewOpen = false; // opt-in view; the Analyze button toggles it, selecting a file exits it
+let homeData = null;
+let homeOpen = false; // the user scope opens on the home cards; a card or the health view drills into the tree
+let homeFocus = null; // scopes a home card drilled into; the tree shows only these until cleared
+let previewPath = null; // a file outside the stack (settings, output style) shown read-only in the preview
 
 // #endregion STATE
 
@@ -202,10 +206,23 @@ async function fetchJSON(url) {
 
 // #region PROJECT
 
-async function loadProject() {
-  projectData = await fetchJSON('/api/project');
+// The user scope rides in the recents list as this entry, so the boot restore brings it back.
+const USER_ROW = '::user::';
+
+function projectKey(info) {
+  return info?.user ? USER_ROW : info?.path;
+}
+
+async function loadProject(info) {
+  const wasUser = !!projectData?.user;
+  projectData = info || (await fetchJSON('/api/project'));
   document.getElementById('projectName').textContent = projectData.name;
-  document.getElementById('projectBtn').title = projectData.path;
+  document.getElementById('projectBtn').title = projectData.user
+    ? `User scope · ${projectData.configDir}`
+    : projectData.path;
+  document.body.classList.toggle('user-scope', !!projectData.user);
+  if (projectData.user !== wasUser) homeOpen = !!projectData.user;
+  homeFocus = null;
 }
 
 // Shared by the project picker, the boot restore, and the hub project shim. Throws with the
@@ -216,12 +233,13 @@ async function putProject(dirPath) {
   const res = await fetch('/api/project', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path: dirPath }),
+    body: JSON.stringify(dirPath === USER_ROW ? { user: true } : { path: dirPath }),
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
     throw new Error(err.error || `${res.status}`);
   }
+  return res.json();
 }
 
 function changeProject() {
@@ -238,11 +256,15 @@ async function submitProjectPicker() {
   btn.disabled = true;
   btn.textContent = 'Switching...';
   try {
-    await putProject(dirPath);
+    const info = await putProject(dirPath);
+    // A later hub push of the project this app left must still apply, not be deduped.
+    lastAppliedProject = dirPath;
     closeModal('projectPickerModal');
     addRecentProject(dirPath);
-    await Promise.all([loadProject(), loadData()]);
-    showToast('Project switched', 'success');
+    // loadData reads projectData to decide whether the home cards need /api/home.
+    await loadProject(info);
+    await loadData();
+    showToast(dirPath === USER_ROW ? 'Switched to user scope' : 'Project switched', 'success');
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
@@ -291,6 +313,17 @@ function getRecentProjects() {
   }
 }
 
+// A fresh app (no recents) starts on the user home, so the hub's replayed project does not apply either.
+function userScopeIsHead() {
+  const head = getRecentProjects()[0];
+  return !head || head === USER_ROW;
+}
+
+async function isUserScopeRemembered() {
+  await projectInfoPromise;
+  return userScopeIsHead();
+}
+
 function addRecentProject(p) {
   const recent = getRecentProjects().filter((r) => r !== p);
   recent.unshift(p);
@@ -305,7 +338,7 @@ function setPickerMode(add) {
   document.getElementById('projectPickerFilter').hidden = add;
   document.getElementById('projectPickerAddForm').hidden = !add;
   const input = document.getElementById(add ? 'projectPathInput' : 'projectPickerInput');
-  if (add) input.value = document.getElementById('projectBtn').title;
+  if (add) input.value = projectData?.path || '';
   // The overlay fades in, so a focus() on a field that is still hidden is dropped.
   setTimeout(() => input.focus(), 100);
 }
@@ -319,19 +352,29 @@ function splitProjectPath(p) {
 function renderProjectPicker() {
   const list = document.getElementById('projectPickerList');
   const q = document.getElementById('projectPickerInput').value.trim().toLowerCase();
-  const current = document.getElementById('projectBtn').title;
-  const recent = getRecentProjects();
-  pickerRows = q ? recent.filter((p) => p.toLowerCase().includes(q)) : recent;
+  const current = projectKey(projectData);
+  const recent = getRecentProjects().filter((p) => p !== USER_ROW);
+  const userMatches = !q || 'user (no project)'.includes(q);
+  pickerRows = [
+    ...(userMatches ? [USER_ROW] : []),
+    ...(q ? recent.filter((p) => p.toLowerCase().includes(q)) : recent),
+  ];
   if (!pickerRows.length) {
     pickerIdx = -1;
-    const msg = recent.length ? 'No projects match' : 'No recent projects — add one below';
-    list.innerHTML = `<div class="picker-empty">${msg}</div>`;
+    list.innerHTML = '<div class="picker-empty">No projects match</div>';
     return;
   }
   list.innerHTML = pickerRows
     .map((p, i) => {
-      const { name, parent } = splitProjectPath(p);
       const cur = p === current;
+      if (p === USER_ROW) {
+        return `<div class="picker-row picker-user${cur ? ' current' : ''}" onclick="_pickProject(${i})" title="Sources every session loads, whatever the project">
+        <span class="picker-name">User (no project)</span>
+        <span class="picker-parent">${esc(claudeConfigDir)}</span>
+        ${cur ? '<span class="picker-tag">current</span>' : ''}
+      </div>`;
+      }
+      const { name, parent } = splitProjectPath(p);
       return `<div class="picker-row${cur ? ' current' : ''}" onclick="_pickProject(${i})" title="${esc(p)}">
         <span class="picker-name">${esc(name)}</span>
         <span class="picker-parent">${esc(parent)}</span>
@@ -363,7 +406,7 @@ function _pickProject(idx) {
 function _removeRecentProject(idx, e) {
   e.stopPropagation();
   const target = pickerRows[idx];
-  if (!target) return;
+  if (!target || target === USER_ROW) return;
   localStorage.setItem(recentsKey(), JSON.stringify(getRecentProjects().filter((p) => p !== target)));
   renderProjectPicker();
 }
@@ -533,7 +576,8 @@ function toggleHelpModal() {
 }
 
 function openHealthView() {
-  healthViewOpen = !healthViewOpen;
+  healthViewOpen = homeOpen || !healthViewOpen;
+  leaveHome();
   document.getElementById('analyzeBtn')?.classList.toggle('active', healthViewOpen);
   renderPreview();
   if (healthViewOpen) refreshAnalysis();
@@ -543,13 +587,14 @@ function openHealthView() {
 
 // #region RENDER_TREE
 
-const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory', 'skill', 'agent-memory'];
+const SCOPE_ORDER = ['policy', 'user', 'project', 'rule', 'memory', 'skill', 'agent', 'agent-memory'];
 const SCOPE_LABELS = {
   policy: 'Managed Policy',
   user: 'User',
   project: 'Project',
   rule: 'Rules',
   skill: 'Skills',
+  agent: 'Agents',
   memory: 'Auto Memory',
   'agent-memory': 'Agent Memory',
 };
@@ -646,9 +691,10 @@ function renderTree() {
   }
 
   let html = '';
+  if (projectData?.user) html += treeHomeLink();
   for (const scope of SCOPE_ORDER) {
     const items = groups[scope];
-    if (!items) continue;
+    if (!items || !inFocus(scope)) continue;
     const label = SCOPE_LABELS[scope] || scope;
     const collapsible = scope === 'agent-memory';
     const collapsed = collapsible && isGroupCollapsed(scope);
@@ -737,13 +783,16 @@ function pushFileState(id) {
 }
 
 function selectFile(id, pushState = true) {
+  leaveHome();
   if (healthViewOpen) {
     healthViewOpen = false;
     document.getElementById('analyzeBtn')?.classList.remove('active');
   }
   selectedFileId = selectedFileId === id ? null : id;
+  previewPath = null;
   if (selectedFileId) {
     const item = stackData.find((s) => s.id === selectedFileId);
+    if (item && !inFocus(getItemScope(item))) homeFocus = null;
     if (item) {
       expandGroupForItem(item);
       expandItemAncestors(item);
@@ -783,7 +832,7 @@ function getVisibleOrder() {
     }
   };
   for (const scope of SCOPE_ORDER) {
-    if (isGroupCollapsed(scope)) continue;
+    if (isGroupCollapsed(scope) || !inFocus(scope)) continue;
     const items = groups[scope];
     if (items) for (const item of items) walk(item);
   }
@@ -882,7 +931,7 @@ async function renderPreview() {
     if (lastAnalysisSt) rerenderAnalysis();
     return;
   }
-  const source = stackData.find((s) => s.id === selectedFileId);
+  const source = stackData.find((s) => s.id === selectedFileId) || previewPath;
   if (!source) {
     panel.innerHTML =
       '<div class="preview-empty"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v4c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 9v4c0 1.66 4.03 3 9 3s9-1.34 9-3V9"/><path d="M3 13v4c0 1.66 4.03 3 9 3s9-1.34 9-3v-4"/></svg><span>Select a file to preview</span></div>';
@@ -893,9 +942,11 @@ async function renderPreview() {
   try {
     fileData = await fetchJSON(`/api/file?path=${encodeURIComponent(source.path)}`);
   } catch {
-    panel.innerHTML = '<div class="preview-empty"><span>Failed to load file</span></div>';
+    const msg = source.outside ? `${source.path} does not exist` : 'Failed to load file';
+    panel.innerHTML = `<div class="preview-empty"><span>${esc(msg)}</span></div>`;
     return;
   }
+  if (source.outside) Object.assign(source, { lines: fileData.lines, bytes: fileData.bytes });
 
   let html = '<div class="preview-header">';
   html += '<div class="preview-title">';
@@ -909,7 +960,8 @@ async function renderPreview() {
     }
   }
   html += `<button class="action-btn small" onclick="openInEditor('${escAttrJs(source.path)}')" title="Open in VS Code"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M17.583 2.207a1.1 1.1 0 0 1 1.541.033l2.636 2.636a1.1 1.1 0 0 1 .033 1.541L10.68 17.53a1.1 1.1 0 0 1-.345.247l-4.56 1.903a.55.55 0 0 1-.725-.725l1.903-4.56a1.1 1.1 0 0 1 .247-.345zm.902 1.87-8.794 8.793-.946 2.268 2.268-.946 8.794-8.793z"/></svg></button>`;
-  html += `<button class="action-btn small" onclick="_confirmDeleteFile('${escAttrJs(source.path)}','${escAttrJs(source.name)}')" title="Delete file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
+  if (!source.outside)
+    html += `<button class="action-btn small" onclick="_confirmDeleteFile('${escAttrJs(source.path)}','${escAttrJs(source.name)}')" title="Delete file"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>`;
   html += '</div></div>';
 
   // Description gets its own full-width line; the rest stay as key:value chips
@@ -1114,6 +1166,7 @@ async function openInEditor(filePath) {
 
 // #region ANALYZER
 
+const SEV_ORDER = { high: 0, med: 1, low: 2, clean: 3 };
 let analysisPollTimer = null;
 let lastAnalysisSt = null;
 let analysisFindings = []; // findings of the rendered result, addressed by index from handlers
@@ -1270,6 +1323,7 @@ async function refreshAnalysis() {
     renderTree();
     if (isNew && !healthViewOpen && selectedFileId) renderPreview();
     rerenderAnalysis(st);
+    if (homeOpen) renderHome();
   }
   lastPollKey = pollKey;
   clearTimeout(analysisPollTimer);
@@ -1346,8 +1400,11 @@ function analysisScopeGroups() {
 function _toggleScopePanel() {
   scopePanelOpen = !scopePanelOpen;
   if (scopePanelOpen && !scopeChecked) {
-    // default scope = auto memory only (skills, agent memory, CLAUDE.md are opt-in)
-    scopeChecked = new Set(stackData.filter((s) => s.scope === 'memory').map((s) => s.id));
+    // default scope = auto memory only (skills, agent memory, CLAUDE.md are opt-in);
+    // the user scope has no auto memory, so it starts on the user CLAUDE.md
+    const memory = stackData.filter((s) => s.scope === 'memory');
+    const fallback = stackData.filter((s) => s.scope === 'user' && !s.parentId);
+    scopeChecked = new Set((memory.length ? memory : fallback).map((s) => s.id));
   }
   rerenderAnalysis();
 }
@@ -1743,14 +1800,13 @@ function renderMemoryMap(shown) {
       }
     }
   }
-  const sevRank = { high: 0, med: 1, low: 2, clean: 3 };
   const cellSev = (s) => {
     const c = perFile.get(s.id);
     return c ? (c.high ? 'high' : c.med ? 'med' : 'low') : 'clean';
   };
   let html = '<div class="hv-map-label">Memory map — colored by worst finding</div><div class="hv-map">';
   for (const s of [...audited].sort(
-    (a, b) => sevRank[cellSev(a)] - sevRank[cellSev(b)] || a.name.localeCompare(b.name),
+    (a, b) => SEV_ORDER[cellSev(a)] - SEV_ORDER[cellSev(b)] || a.name.localeCompare(b.name),
   )) {
     const c = perFile.get(s.id);
     const sev = cellSev(s);
@@ -1815,10 +1871,9 @@ function _toggleFixSelect(idx) {
 }
 
 function _copyFixPlan() {
-  const order = { high: 0, med: 1, low: 2 };
   const picked = analysisFindings
     .filter((f) => fixSelected.has(findingKey(f)))
-    .sort((a, b) => order[a.severity] - order[b.severity]);
+    .sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity]);
   if (!picked.length) return;
   const plan = [
     `Fix plan — ${picked.length} finding${picked.length > 1 ? 's' : ''} from a Claude Code memory audit, ordered by severity. Apply each in order.`,
@@ -2002,6 +2057,11 @@ function renderAnalysis(st) {
 
 // #region RENDER_BUDGET
 
+// Listed descriptions: [scope, summary key, label]. Each item's cost is its description, not its file.
+const DESC_SEGMENTS = [
+  ['skill', 'skillDesc', 'Skill descriptions'],
+  ['agent', 'agentDesc', 'Agent descriptions'],
+];
 let footprintHighlight = false;
 let footprintScope = null; // null = whole footprint; a scope name = just that segment's files
 let footprintIds = new Set(); // source ids the server counted into the footprint
@@ -2023,7 +2083,7 @@ function _toggleFootprint(scope = null, ev) {
 }
 
 function footprintHit(item) {
-  if (footprintScope === 'skill') return item.scope === 'skill' && !item.parentId;
+  if (DESC_SEGMENTS.some(([scope]) => scope === footprintScope)) return item.scope === footprintScope && !item.parentId;
   if (footprintScope) return footprintIds.has(item.id) && item.scope === footprintScope;
   return footprintIds.has(item.id);
 }
@@ -2053,7 +2113,6 @@ function renderBudget() {
   // the footprint filter, the client only renders its per-scope totals.
   const segContainer = document.getElementById('budgetSegments');
   const scopeTotals = summaryData.scopeChars || {};
-  const skillDescChars = summaryData.skillDesc?.chars || 0;
   const totalChars = summaryData.totalChars || 1;
   let html = '';
   for (const scope of SCOPE_ORDER) {
@@ -2062,9 +2121,11 @@ function renderBudget() {
     const pct = (chars / totalChars) * 100;
     html += `<div class="budget-segment" data-scope="${esc(scope)}" onclick="_toggleFootprint('${escAttrJs(scope)}', event)" style="width:${pct}%;background:var(--scope-${scope})" title="${SCOPE_LABELS[scope] || scope}: ${chars.toLocaleString()} chars (${pct.toFixed(1)}%) — click to highlight"></div>`;
   }
-  if (skillDescChars) {
-    const pct = (skillDescChars / totalChars) * 100;
-    html += `<div class="budget-segment" data-scope="skill" onclick="_toggleFootprint('skill', event)" style="width:${pct}%;background:var(--scope-skill)" title="Skill descriptions (${esc(summaryData.skillDesc.count)} enabled): ${skillDescChars.toLocaleString()} chars (${pct.toFixed(1)}%) — click to highlight"></div>`;
+  for (const [scope, desc, label] of DESC_SEGMENTS) {
+    const chars = summaryData[desc]?.chars || 0;
+    if (!chars) continue;
+    const pct = (chars / totalChars) * 100;
+    html += `<div class="budget-segment" data-scope="${esc(scope)}" onclick="_toggleFootprint('${escAttrJs(scope)}', event)" style="width:${pct}%;background:var(--scope-${scope})" title="${esc(label)} (${esc(summaryData[desc].count)}): ${chars.toLocaleString()} chars (${pct.toFixed(1)}%) — click to highlight"></div>`;
   }
   segContainer.innerHTML = html;
   applySegmentState();
@@ -2072,11 +2133,470 @@ function renderBudget() {
 
 // #endregion RENDER_BUDGET
 
+// #region HOME
+
+const svgIcon = (body) => `<svg class="home-ic" viewBox="0 0 24 24">${body}</svg>`;
+const HOME_ICON = svgIcon('<path d="M3 10l9-7 9 7v10a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><path d="M9 22V12h6v10"/>');
+const LOCK_ICON = svgIcon('<rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>');
+const SPARKLE_ICON = svgIcon(
+  '<path d="M12 3l1.9 5.7L19.6 10l-5.7 1.9L12 17.6l-1.9-5.7L4.4 10l5.7-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
+);
+
+function applyLayout() {
+  const on = homeOpen && !!projectData?.user;
+  document.body.classList.toggle('home-mode', on);
+  if (on) renderHome();
+}
+
+function leaveHome() {
+  if (!homeOpen) return;
+  homeOpen = false;
+  applyLayout();
+}
+
+function showHome() {
+  homeOpen = true;
+  homeFocus = null;
+  previewPath = null;
+  healthViewOpen = false;
+  applyLayout();
+}
+
+function inFocus(scope) {
+  return !homeFocus || homeFocus.includes(scope);
+}
+
+function treeHomeLink() {
+  const home = `<span class="tree-home-crumb" onclick="showHome()">${HOME_ICON}Home</span>`;
+  if (!homeFocus) return `<div class="tree-home-link">${home}</div>`;
+  const { groups } = getTreeIndex();
+  const label = homeFocus
+    .filter((s) => groups[s])
+    .map((s) => SCOPE_LABELS[s] || s)
+    .join(' + ');
+  return `<div class="tree-home-link">${home}<span class="tree-home-sep">›</span><span class="tree-home-focus">${esc(label)}</span><span class="tree-home-all" onclick="_clearHomeFocus()" title="Show every group">show all</span></div>`;
+}
+
+function _clearHomeFocus() {
+  homeFocus = null;
+  renderTree();
+  scrollToSelected();
+}
+
+// scopes is a comma list; without it the clicked file's own group is the focus.
+function _openFromHome(id, scopes) {
+  const item = stackData.find((s) => s.id === id);
+  homeFocus = scopes ? scopes.split(',') : item ? [getItemScope(item)] : null;
+  for (const s of homeFocus || []) setGroupCollapsed(s, false);
+  selectedFileId = null;
+  selectFile(id);
+}
+
+function _openPath(path, scope) {
+  leaveHome();
+  healthViewOpen = false;
+  selectedFileId = null;
+  previewPath = { outside: true, id: null, scope, load: 'read-only', path, name: splitProjectPath(path).name };
+  renderTree();
+  renderPreview();
+}
+
+function fmtChars(n) {
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+function rootOf(item, byId) {
+  let cur = item;
+  while (cur?.parentId && byId.has(cur.parentId)) cur = byId.get(cur.parentId);
+  return cur;
+}
+
+function hardImportsOf(rootId) {
+  const kids = (getTreeIndex().childrenOf[rootId] || []).filter((s) => s.load === 'import');
+  return kids.flatMap((k) => [k, ...hardImportsOf(k.id)]);
+}
+
+function withImportsChars(item) {
+  return [item, ...hardImportsOf(item.id)].reduce((n, s) => n + (s.chars || 0), 0);
+}
+
+const HOME_NONE = '<li><span class="home-empty">None</span></li>';
+
+function moreRow(n) {
+  return `<li class="home-more"><span class="home-nm">+ ${n} more</span></li>`;
+}
+
+function homeBudget() {
+  const parts = { policy: 0, user: 0, rule: 0 };
+  const byId = new Map(stackData.map((s) => [s.id, s]));
+  for (const s of stackData) {
+    if (!footprintIds.has(s.id)) continue;
+    const root = rootOf(s, byId);
+    if (root.scope === 'policy') parts.policy += s.chars || 0;
+    else if (root.id === 'user-claude-md') parts.user += s.chars || 0;
+    else if (root.scope === 'rule' && root.load === 'always') parts.rule += s.chars || 0;
+  }
+  parts.policy += homeData?.managed?.claudeMdChars || 0;
+  const style = homeData?.outputStyle?.chars ?? null;
+  return [
+    { key: 'policy', label: 'Policy', chars: parts.policy },
+    { key: 'user', label: 'CLAUDE.md + imports', chars: parts.user },
+    { key: 'rule', label: 'Always-on rules', chars: parts.rule },
+    { key: 'style', label: 'Output style', chars: style || 0, unknown: style == null },
+    { key: 'skill', label: 'Skill descriptions', chars: summaryData?.skillDesc?.chars || 0 },
+    { key: 'agent', label: 'Agent descriptions', chars: summaryData?.agentDesc?.chars || 0 },
+  ];
+}
+
+function homeCardClick({ open, focus, file, fileScope, health }) {
+  if (open) return ` onclick="_openFromHome('${escAttrJs(open)}', '${escAttrJs(focus || '')}')"`;
+  if (file) return ` onclick="_openPath('${escAttrJs(file)}', '${escAttrJs(fileScope)}')"`;
+  if (health) return ' onclick="openHealthView()"';
+  return '';
+}
+
+function homeCard({ color, title, when, always, wide, full, body, ...click }) {
+  const onclick = homeCardClick(click);
+  return `<div class="home-card${full ? ' full' : wide ? ' wide' : ''}" style="--c:${color}"${onclick}${onclick ? ' tabindex="0" role="button"' : ''}>
+    <div class="home-ch"><span class="home-title">${title}</span>${when ? `<span class="home-when${always ? ' always' : ''}">${esc(when)}</span>` : ''}</div>
+    ${body}
+  </div>`;
+}
+
+function homeRow(s, right, extra = '', label = s.name) {
+  return `<li onclick="event.stopPropagation();_openFromHome('${escAttrJs(s.id)}')"><span class="home-nm">${esc(label)}</span>${extra}<span class="home-r">${right}</span></li>`;
+}
+
+function homeMiniRow(s, chars, max, color) {
+  const pct = max ? Math.max(4, Math.round((chars / max) * 100)) : 0;
+  return homeRow(
+    s,
+    esc(chars.toLocaleString()),
+    `<span class="home-mini" style="--c:${color}"><span style="width:${pct}%"></span></span>`,
+  );
+}
+
+function homeTopRows(items, color, limit = 3) {
+  if (!items.length) return HOME_NONE;
+  const sorted = [...items].sort((a, b) => b.descChars - a.descChars);
+  const max = sorted[0].descChars;
+  let html = sorted
+    .slice(0, limit)
+    .map((s) => homeMiniRow(s, s.descChars, max, color))
+    .join('');
+  if (sorted.length > limit) html += moreRow(sorted.length - limit);
+  return html;
+}
+
+function homeStats(pairs) {
+  return `<div class="home-stats">${pairs.map(([v, l]) => `<div><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('')}</div>`;
+}
+
+function renderHomePolicy() {
+  const policy = stackData.find((s) => s.scope === 'policy' && !s.parentId);
+  const managed = homeData?.managed || {};
+  const managedPath = homeData?.settingsPaths?.managed || '';
+  const none = '<span class="home-pill mut">none</span>';
+  const mdRow = policy
+    ? homeRow(policy, esc(`${fmtChars(withImportsChars(policy))} chars`), '', 'CLAUDE.md')
+    : `<li><span class="home-nm">CLAUDE.md</span><span class="home-r">${none}</span></li>`;
+  const settingsName = splitProjectPath(managedPath).name || 'managed-settings.json';
+  const settingsRow = managed.keys
+    ? `<li onclick="event.stopPropagation();_openPath('${escAttrJs(managedPath)}', 'policy')" title="${esc(managedPath)}"><span class="home-nm">${esc(settingsName)}${managed.source === 'server' ? ' <span class="home-d">· from claude.ai</span>' : ''}</span><span class="home-r">${esc(managed.keys.join(', ') || 'empty')}</span></li>`
+    : `<li title="${esc(managedPath)}"><span class="home-nm">managed settings</span><span class="home-r">${none}</span></li>`;
+  const claudeMdRow =
+    managed.claudeMdChars == null
+      ? ''
+      : `<li><span class="home-nm">claudeMd in settings</span><span class="home-r">${esc(`${fmtChars(managed.claudeMdChars)} chars`)}</span></li>`;
+  return homeCard({
+    color: 'var(--scope-policy)',
+    title: `${LOCK_ICON}Managed policy`,
+    when: 'always',
+    always: true,
+    open: policy?.id,
+    file: managed.keys ? managedPath : null,
+    fileScope: 'policy',
+    body: `<ul class="home-rows">${mdRow}${settingsRow}${claudeMdRow}</ul>`,
+  });
+}
+
+function renderHomeUserMd() {
+  const md = stackData.find((s) => s.id === 'user-claude-md');
+  const card = { color: 'var(--scope-user)', title: 'User CLAUDE.md', when: 'always', always: true };
+  if (!md) {
+    return homeCard({
+      ...card,
+      body: `<div class="home-path">${esc(summaryData?.userClaudeMd || '')}</div><div class="home-empty">File does not exist</div>`,
+    });
+  }
+  const imports = hardImportsOf(md.id);
+  const tree = imports
+    .map((s, i) => {
+      const branch = i === imports.length - 1 ? '└─' : '├─';
+      return `<div onclick="event.stopPropagation();_openFromHome('${escAttrJs(s.id)}')"><span class="home-d">${branch}</span> @${esc(s.name)} <span class="home-d">${esc(fmtChars(s.chars || 0))}</span></div>`;
+    })
+    .join('');
+  return homeCard({
+    ...card,
+    open: md.id,
+    body: `<div class="home-path" title="${esc(md.path)}">${esc(md.path)}</div>${homeStats([
+      [md.lines, 'lines'],
+      [fmtChars(withImportsChars(md)), 'chars'],
+      [imports.length, 'imports'],
+    ])}${imports.length ? `<div class="home-tree">${tree}</div>` : ''}`,
+  });
+}
+
+function renderHomeStyle() {
+  const st = homeData?.outputStyle;
+  if (!st) return '';
+  const isDefault = st.from === 'default';
+  const isManaged = st.from === 'managed';
+  const fromLabel = isDefault ? 'not set · default' : `set in ${isManaged ? 'managed' : 'user'} settings`;
+  const keep = st.keepCodingInstructions == null ? 'n/a' : String(st.keepCodingInstructions);
+  const setIn = isManaged ? homeData.settingsPaths.managed : homeData.settingsPaths.user;
+  const setInScope = isManaged ? 'policy' : 'user';
+  const fromRow = isDefault
+    ? `<li><span class="home-nm">${esc(fromLabel)}</span></li>`
+    : `<li onclick="event.stopPropagation();_openPath('${escAttrJs(setIn)}', '${escAttrJs(setInScope)}')"><span class="home-nm" title="${esc(setIn)}">${esc(fromLabel)}</span></li>`;
+  return homeCard({
+    color: 'var(--scope-style)',
+    title: 'Output style',
+    when: 'always',
+    always: true,
+    file: st.path || (isDefault ? null : setIn),
+    fileScope: st.path ? 'user' : setInScope,
+    body: `${homeStats([[st.name, !st.path ? 'built-in · text not on disk' : `${fmtChars(st.chars || 0)} chars`]])}
+      <ul class="home-rows">
+        ${fromRow}
+        <li><span class="home-nm">keep-coding-instructions</span><span class="home-r">${esc(keep)}</span></li>
+      </ul>`,
+  });
+}
+
+function renderHomeRules() {
+  const rules = stackData.filter((s) => s.scope === 'rule' && !s.parentId);
+  const always = rules.filter((s) => s.load === 'always');
+  const cond = rules.filter((s) => s.load !== 'always');
+  const alwaysChars = always.reduce((n, s) => n + withImportsChars(s), 0);
+  const globs = (s) => {
+    const p = s.frontmatter?.paths;
+    return Array.isArray(p) ? p.join(', ') : String(p || '');
+  };
+  const list = (items, right) => (items.length ? items.map((s) => homeRow(s, right(s))).join('') : HOME_NONE);
+  return homeCard({
+    color: 'var(--scope-rule)',
+    title: 'User rules',
+    when: `${claudeConfigDir}/rules`,
+    wide: true,
+    open: rules[0]?.id,
+    body: `<div class="home-cols">
+      <div><div class="home-colh">Always loaded · ${always.length}${always.length ? ` · ${esc(fmtChars(alwaysChars))}` : ''}</div>
+        <ul class="home-rows">${list(always, (s) => esc(fmtChars(withImportsChars(s))))}</ul></div>
+      <div><div class="home-colh">When a file matches · ${cond.length}</div>
+        <ul class="home-rows">${list(cond, (s) => esc(globs(s)))}</ul></div>
+    </div>`,
+  });
+}
+
+function renderHomeAgentMemory() {
+  const idx = stackData.filter((s) => s.scope === 'agent-memory' && s.name === 'MEMORY.md' && !s.parentId);
+  const rows = idx
+    .map((s) => {
+      const max = s.maxLines || 200;
+      const pct = Math.min(100, Math.round((s.lines / max) * 100));
+      const warn = pct >= 90 || s.bytes > (s.maxBytes || 25 * 1024);
+      const bar = `<span class="home-mini" style="--c:var(--scope-agent-memory)"><span class="${warn ? 'warn' : ''}" style="width:${pct}%"></span></span>`;
+      return homeRow(s, esc(`${s.lines}/${max}`), bar, s.agentName);
+    })
+    .join('');
+  return homeCard({
+    color: 'var(--scope-agent-memory)',
+    title: 'Subagent memory',
+    when: 'on agent start',
+    open: idx[0]?.id,
+    body: `<div class="home-path">${esc(claudeConfigDir)}/agent-memory/</div>${
+      rows ? `<ul class="home-rows">${rows}</ul>` : '<div class="home-empty">No subagent keeps user memory</div>'
+    }`,
+  });
+}
+
+function renderHomeListed() {
+  const skills = stackData.filter((s) => s.scope === 'skill' && s.descChars != null);
+  const agents = stackData.filter((s) => s.scope === 'agent' && s.descChars != null);
+  const first = skills[0] || agents[0];
+  return homeCard({
+    color: 'var(--scope-skill)',
+    title: 'User skills and agents',
+    when: 'descriptions only',
+    always: true,
+    wide: true,
+    open: first?.id,
+    focus: 'skill,agent',
+    body: `<div class="home-cols">
+      <div><div class="home-colh">Skills · ${skills.length}${skills.length ? ` · ${esc(fmtChars(summaryData?.skillDesc?.chars || 0))}` : ''}</div>
+        <ul class="home-rows">${homeTopRows(skills, 'var(--scope-skill)')}</ul></div>
+      <div><div class="home-colh">Agents · ${agents.length}${agents.length ? ` · ${esc(fmtChars(summaryData?.agentDesc?.chars || 0))}` : ''}</div>
+        <ul class="home-rows">${homeTopRows(agents, 'var(--scope-agent)')}</ul></div>
+    </div>${
+      hub.can('project.plugins')
+        ? '<ul class="home-rows home-plugins"><li onclick="event.stopPropagation();_openPlugins()"><span class="home-nm">Plugins list their skills and agents too. Open Marketplace</span></li></ul>'
+        : ''
+    }`,
+  });
+}
+
+function _openPlugins() {
+  hub.invoke('project.plugins');
+}
+
+function renderHomeSettings() {
+  const set = homeData?.settings;
+  if (!set) return '';
+  const show = (v) => {
+    if (v == null) return '—';
+    if (Array.isArray(v)) return v.length ? v.join(', ') : '[]';
+    return String(v);
+  };
+  const rows = [
+    ['autoMemoryEnabled', set.autoMemoryEnabled],
+    ['autoMemoryDirectory', set.autoMemoryDirectory],
+    ['claudeMdExcludes', set.claudeMdExcludes],
+    ['cleanupPeriodDays', set.cleanupPeriodDays],
+    ['DISABLE_AUTO_MEMORY', set.CLAUDE_CODE_DISABLE_AUTO_MEMORY],
+  ]
+    .map(
+      ([k, s]) =>
+        `<span class="home-k">${esc(k)}</span><span>${esc(show(s?.value))}<span class="home-from">${esc(s?.from || '')}</span></span>`,
+    )
+    .join('');
+  return homeCard({
+    color: 'var(--text-muted)',
+    title: 'Memory settings',
+    when: 'effective',
+    file: homeData.settingsPaths.user,
+    fileScope: 'user',
+    body: `<div class="home-kv">${rows}</div>`,
+  });
+}
+
+const SEVERITY_PILL = { high: 'err', med: 'warn', low: 'mut' };
+
+function renderHomeHealth() {
+  const st = lastAnalysisSt;
+  const run = st ? mergedRunView(st) : null;
+  const latest = allAnalysisRuns(st)[0]?.run;
+  const pending = (st?.pending || []).length;
+  let rows;
+  if (!run) {
+    rows =
+      '<li><span class="home-empty">No run yet. Analyze checks the user scope for conflicts and stale facts.</span></li>';
+  } else {
+    const findings = (run.result?.findings || [])
+      .filter((f) => !isDismissed(f))
+      .sort((a, b) => (SEV_ORDER[a.severity] ?? 3) - (SEV_ORDER[b.severity] ?? 3));
+    rows = findings.length
+      ? findings
+          .slice(0, 4)
+          .map(
+            (f) =>
+              `<li><span class="home-pill ${SEVERITY_PILL[f.severity] || 'mut'}">${esc(f.kind || f.severity)}</span><span class="home-nm">${esc(f.title)}</span></li>`,
+          )
+          .join('')
+      : '<li><span class="home-pill ok">ok</span><span class="home-nm">No open findings</span></li>';
+    if (findings.length > 4) rows += moreRow(findings.length - 4);
+  }
+  const when = pending ? 'running…' : latest ? `last run ${analysisTimeAgo(latest.ts)}` : 'never run';
+  return homeCard({
+    color: 'var(--accent)',
+    title: `${SPARKLE_ICON}Health · user scope`,
+    when,
+    full: true,
+    health: true,
+    body: `<ul class="home-rows">${rows}</ul>`,
+  });
+}
+
+function renderHomeRecents() {
+  const recent = getRecentProjects()
+    .filter((p) => p !== USER_ROW)
+    .slice(0, 6);
+  const chips = recent
+    .map((p) => {
+      const { name } = splitProjectPath(p);
+      return `<span class="home-chip" title="${esc(p)}" onclick="_homeSwitch('${escAttrJs(p)}')"><span class="home-dot"></span>${esc(name)}</span>`;
+    })
+    .join('');
+  return `<div class="home-recents"><h2>Open a project</h2><div class="home-chips">${chips}<span class="home-chip home-chip-add" onclick="_homeAddPath()">+ Add path</span></div></div>`;
+}
+
+function _homeSwitch(p) {
+  document.getElementById('projectPathInput').value = p;
+  submitProjectPicker();
+}
+
+function _goUserHome() {
+  if (projectData?.user) showHome();
+  else _homeSwitch(USER_ROW);
+}
+
+function _homeAddPath() {
+  changeProject();
+  setPickerMode(true);
+}
+
+function renderHome() {
+  const el = document.getElementById('homeView');
+  if (!el || !summaryData) return;
+  const parts = homeBudget();
+  const known = parts.reduce((n, p) => n + p.chars, 0);
+  const total = known || 1;
+  const bar = parts
+    .filter((p) => p.chars)
+    .map(
+      (p) =>
+        `<span style="width:${(p.chars / total) * 100}%;background:var(--scope-${p.key})" title="${esc(p.label)}: ${p.chars.toLocaleString()} chars"></span>`,
+    )
+    .join('');
+  const legend = parts
+    .map((p) =>
+      p.unknown
+        ? `<span class="home-unk"><i style="background:var(--scope-${p.key})"></i>${esc(p.label)}: built-in, not counted</span>`
+        : `<span${p.chars ? '' : ' class="home-zero"'}><i style="background:var(--scope-${p.key})"></i>${esc(p.label)} <b>${esc(fmtChars(p.chars))}</b></span>`,
+    )
+    .join('');
+  el.innerHTML = `<div class="home">
+    <h1>Your memory</h1>
+    <div class="home-budget">
+      <div class="home-budget-head"><span class="t">Loaded into every session</span><span class="n">${esc(known.toLocaleString())} <small>chars · from files on disk</small></span></div>
+      <div class="home-bar">${bar}</div>
+      <div class="home-legend">${legend}</div>
+    </div>
+    <div class="home-grid">
+      ${renderHomePolicy()}
+      ${renderHomeUserMd()}
+      ${renderHomeStyle()}
+      ${renderHomeListed()}
+      ${renderHomeSettings()}
+      ${renderHomeRules()}
+      ${renderHomeAgentMemory()}
+      ${renderHomeHealth()}
+    </div>
+    ${renderHomeRecents()}
+  </div>`;
+}
+
+// #endregion HOME
+
 // #region DATA
 
 async function loadData() {
   try {
-    [stackData, summaryData] = await Promise.all([fetchJSON('/api/stack'), fetchJSON('/api/summary')]);
+    [stackData, summaryData, homeData] = await Promise.all([
+      fetchJSON('/api/stack'),
+      fetchJSON('/api/summary'),
+      projectData?.user ? fetchJSON('/api/home') : null,
+    ]);
     invalidateTreeIndex();
     renderBudget(); // refreshes footprintIds, which renderTree's highlight reads
     renderTree();
@@ -2089,6 +2609,7 @@ async function loadData() {
     }
     if (selectedFileId) renderTree();
     renderPreview();
+    applyLayout();
   } catch (err) {
     showToast(`Failed to load: ${err.message}`, 'error');
   }
@@ -2136,6 +2657,11 @@ document.addEventListener('keydown', (e) => {
     openHealthView();
     return;
   }
+  if (e.key === 'Escape' && projectData?.user && !homeOpen) {
+    e.preventDefault();
+    showHome();
+    return;
+  }
   if (e.key === 't') toggleTheme();
   if (e.key === 'r') refreshData();
   if (e.key === '?') {
@@ -2145,6 +2671,14 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'P' && e.shiftKey) {
     e.preventDefault();
     changeProject();
+  }
+  if (homeOpen) {
+    const card = e.target.closest?.('.home-card[onclick]');
+    if (card && (e.key === 'Enter' || e.key === ' ')) {
+      e.preventDefault();
+      card.click();
+    }
+    return;
   }
   // Skip when modifiers are held (e.g. hub's Ctrl+Alt+Arrow app switching).
   const plain = !e.ctrlKey && !e.altKey && !e.metaKey;
@@ -2165,8 +2699,8 @@ document.addEventListener('keydown', (e) => {
     expandOrDescend();
   }
   if (e.key === 'Enter' && selectedFileId) renderPreview();
-  if (e.key === 'e' && selectedFileId) {
-    const s = stackData.find((x) => x.id === selectedFileId);
+  if (e.key === 'e' && (selectedFileId || previewPath)) {
+    const s = stackData.find((x) => x.id === selectedFileId) || previewPath;
     if (s) openInEditor(s.path);
   }
 });
@@ -2207,6 +2741,7 @@ hub.onThemes((themes) => {
 // Set synchronously when the hub pushes a project, so the DOMContentLoaded restore below can't
 // let a stale localStorage recent win the race against the hub's choice.
 let hubProjectPath = null;
+let hubProjectReplayed = false;
 // Shared with the DOMContentLoaded restore so a boot restore and a hub push never apply the same project twice.
 let lastAppliedProject = null;
 
@@ -2217,22 +2752,35 @@ let lastAppliedProject = null;
     if (lastAppliedProject === dirPath) return;
     lastAppliedProject = dirPath;
     try {
-      await putProject(dirPath);
+      const info = await putProject(dirPath);
       // The hub does not persist its own scope, so a hub-pushed project must become the recent
       // head here: after a hard refresh the boot path PUTs getRecentProjects()[0], which would
       // otherwise clobber the server's hub-scoped project with the previous one.
       addRecentProject(dirPath);
-      await Promise.all([loadProject(), loadData()]);
+      await loadProject(info);
+      await loadData();
     } catch (err) {
       lastAppliedProject = null;
       throw err;
     }
   }
 
-  hub.subscribe('project.changed', (p) => {
+  // The hub replays project.changed after its welcome and before the first hub:active; a live
+  // change comes after it. Only a live change takes the app off a remembered user scope.
+  let hubActiveSeen = false;
+  hub.onActive(() => {
+    hubActiveSeen = true;
+  });
+
+  hub.subscribe('project.changed', async (p) => {
     const dirPath = typeof p?.project === 'string' && p.project ? p.project : null;
     if (!dirPath) return;
     hubProjectPath = dirPath;
+    hubProjectReplayed = !hubActiveSeen;
+    if (hubProjectReplayed && (await isUserScopeRemembered())) {
+      if (hubProjectPath === dirPath) hubProjectPath = null;
+      return;
+    }
     applyProject(dirPath).catch((err) => console.warn('project.changed failed:', err.message));
   });
 
@@ -2244,6 +2792,11 @@ let lastAppliedProject = null;
 })();
 
 // #endregion HUB_INTEGRATION
+
+// The home's Marketplace link depends on hub.can, which only knows the hub's actions after welcome.
+hub.onStatus(() => {
+  if (homeOpen) renderHome();
+});
 
 // #region RESIZE
 
@@ -2304,7 +2857,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // A hub-pushed project outranks the localStorage recent: ClaudeHub.connect() is fire-and-forget at script
   // eval, so project.changed can land before or during this block.
   await projectInfoPromise;
-  if (!desiredProject) desiredProject = hubProjectPath || getRecentProjects()[0] || null;
+  if (!desiredProject) {
+    const hubPick = hubProjectReplayed && userScopeIsHead() ? null : hubProjectPath;
+    desiredProject = hubPick || getRecentProjects()[0] || USER_ROW;
+  }
   if (desiredProject) {
     // Set before the PUT: the hub's push can land while it is in flight.
     lastAppliedProject = desiredProject;
@@ -2335,12 +2891,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       else showToast('Failed to connect to server', 'error');
     }
   }
-  if (projectData) addRecentProject(projectData.path);
+  if (projectData) addRecentProject(projectKey(projectData));
   await loadData();
   // Restore file selection from hash
   const hash = decodeURIComponent(location.hash.slice(1));
   const hashItem = hash && stackData.find((s) => s.id === hash);
   if (hashItem) {
+    leaveHome();
     selectedFileId = hash;
     expandGroupForItem(hashItem);
     expandItemAncestors(hashItem);
