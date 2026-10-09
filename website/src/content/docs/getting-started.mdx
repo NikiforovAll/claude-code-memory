@@ -23,7 +23,7 @@ npx claude-code-memory-explorer --open
 
 The app scans the memory files for the current directory. `--open` opens the page in your default browser. You do not need a config file.
 
-The page opens the project you used last in this browser. If you started the app in a new directory, switch to it with the project picker. See [Switch project](#switch-project).
+The page opens the project you used last in this browser. The first time, it opens the user scope, with the memory that every session loads. If you started the app in a new directory, switch to it with the project picker. See [Switch project](#switch-project).
 
 The terminal prints two lines:
 
@@ -44,13 +44,15 @@ The page is a progressive web app. In Chrome or Edge, use the install button in 
 
 From top to bottom, the screen has these parts:
 
-- **Top bar.** The project name (click it to switch project), Analyze, Refresh, the color theme picker, the light/dark toggle, help, and a link to GitHub.
+- **Top bar.** The logo (click it to open the user scope), the project name (click it to switch project), Analyze, Refresh, the color theme picker, the light/dark toggle, help, and a link to GitHub.
 - **Memory sources bar.** The total chars and bytes that Claude Code loads, with one colored part for each scope. Click it to highlight those files in the tree.
-- **Tree.** Every memory file the app found, in groups: Managed Policy, User, Project, Rules, Auto Memory, Skills, and Agent Memory. An icon on each row shows when the file loads.
+- **Tree.** Every memory file the app found, in groups: Managed Policy, User, Project, Rules, Auto Memory, Skills, Agents, and Agent Memory. An icon on each row shows when the file loads.
 - **File view.** The file you selected, with its scope, load type, size, frontmatter, imports, full path, and content.
 - **Summary cards.** Files, Chars, Bytes, and Always loaded, counted over the same files as the Memory sources bar.
 
 On first load, the app selects the project `CLAUDE.md`. If the project has none, it selects your user `CLAUDE.md`.
+
+In the user scope, the app shows a Home page of cards in place of the file view. See [Your memory at the user scope](/claude-code-memory/guides/home/).
 
 To learn what each group means and in which order Claude Code loads the files, read [What Claude Code loads](/claude-code-memory/guides/memory-stack/). For the tree icons and the file view, read [Browse memory files](/claude-code-memory/guides/browse/).
 
@@ -76,6 +78,7 @@ The app runs `claude -p` on your machine, so Claude Code must be installed and l
 
 - [What Claude Code loads](/claude-code-memory/guides/memory-stack/)
 - [Browse memory files](/claude-code-memory/guides/browse/)
+- [Your memory at the user scope](/claude-code-memory/guides/home/)
 - [Analyze memory with Claude](/claude-code-memory/guides/analyze/)
 - [Keyboard shortcuts](/claude-code-memory/reference/shortcuts/)
 

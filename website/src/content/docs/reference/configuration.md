@@ -75,16 +75,17 @@ From the config dir:
 
 - `CLAUDE.md`
 - `rules/**/*.md`
-- `settings.json`, only for `autoMemoryDirectory`
+- `settings.json`, for `autoMemoryDirectory`, and in the user scope for the output style and memory settings
+- `skills/`, `agents/`, and `output-styles/`
 - `projects/<encoded project>/memory/`, or the same path under `autoMemoryDirectory` when it is set
 - `agent-memory/<agent>/`
 - `memory-analysis/*.json`
 
 From the project, its parent dirs, and its subdirs: `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, and `.claude/CLAUDE.local.md`.
 
-From the project: `.claude/rules/`, `.claude/skills/`, `.claude/agent-memory/`, and `.claude/agent-memory-local/`.
+From the project: `.claude/rules/`, `.claude/skills/`, `.claude/agents/`, `.claude/agent-memory/`, and `.claude/agent-memory-local/`.
 
-It also reads the managed policy `CLAUDE.md` and every file that these files import. For the full list and the load order, see [What Claude Code loads](/claude-code-memory/guides/memory-stack/).
+It also reads the managed policy `CLAUDE.md`, the managed settings, and every file that these files import. For the full list and the load order, see [What Claude Code loads](/claude-code-memory/guides/memory-stack/).
 
 The app caches the scan for 30 seconds. Press <kbd>r</kbd> to scan again now.
 
@@ -94,7 +95,7 @@ Browsing changes nothing. The app writes to disk only in these cases:
 
 - **Delete file.** Removes the file after you confirm.
 - **Cleanup orphaned refs.** Rewrites a `MEMORY.md` and removes the `- [name](file.md)` lines whose target file does not exist.
-- **Analyze.** Saves runs and dismissed findings in `<config dir>/memory-analysis/<encoded project>.json`. Findings for the user `CLAUDE.md` go to `user-scope.json`, which all projects share. See [Analyze memory with Claude](/claude-code-memory/guides/analyze/).
+- **Analyze.** Saves runs and dismissed findings in `<config dir>/memory-analysis/`, one file for each project and one that all projects share for the user `CLAUDE.md`. See [Analyze memory with Claude](/claude-code-memory/guides/analyze/).
 
 Delete and Cleanup work only on paths inside the config dir, the current project, or the auto memory base dir. Other paths get a 403.
 

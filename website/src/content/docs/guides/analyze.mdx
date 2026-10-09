@@ -33,6 +33,12 @@ To leave the health view, click **Analyze** again, press <kbd>Esc</kbd>, or sele
 
 The app does not audit rules or files that another file imports. An imported file counts as part of the file that imports it. If you do not select the user CLAUDE.md, the app still sends it to Claude as reference, so Claude can tell if a project memory belongs in your global file.
 
+## Analyze the user scope
+
+In the [user scope](/claude-code-memory/guides/home/), the panel lists the user `CLAUDE.md`, user skills, and user agent memory. The user `CLAUDE.md` is selected at first. The **Health · user scope** card on Home shows the open findings of the last run. Click it to open the health view.
+
+User scope findings are shared by all projects, so they also show when you open a project.
+
 ## How the run works
 
 The app starts Claude Code in headless mode with this command:
@@ -138,7 +144,7 @@ After an analysis, the file tree shows a badge on each file with findings. The b
 
 ## Runs and storage
 
-The app saves runs in `<config>/memory-analysis/<encoded project>.json`, where `<config>` is your Claude config directory, such as `~/.claude`. Findings about the user CLAUDE.md go in `user-scope.json`. All projects share that file, so a user CLAUDE.md audit shows in every project. The app keeps the last 10 runs.
+The app saves runs in your Claude config directory, one file for each project. Findings about the user CLAUDE.md are saved once for all projects, so a user CLAUDE.md audit shows in every project. The app keeps the last 10 runs.
 
 When you have more than one run, the default view merges them. Each file shows the result of the newest run that audited it, so a small run on one file does not hide the results for other files. The run chips let you show one run at a time. Click the **×** on a chip to delete that run.
 

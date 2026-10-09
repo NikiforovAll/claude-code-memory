@@ -30,13 +30,17 @@ On page load, the app picks the project in this order:
 2. The project that the hub sent.
 3. The most recent project saved in the browser.
 
-If the hub sends a project while the page is loading, the hub project is used.
+If the hub sends a project while the page is loading, the hub project is used. The exception is the [user scope](/claude-code-memory/guides/home/): when you were in it last, or the app has no recent project, the page stays in the user scope. A project you pick in the hub after that still applies.
 
 You can still use the in-app picker (the folder button in the top bar, or <kbd>Shift+P</kbd>). The next project that the hub sends replaces your choice.
 
+## Open Memory from another app
+
+In Kanban, select a session and press <kbd>Ctrl+M</kbd> to open Memory Diagnoser at that session's project. In the user scope, Home has an **Open Marketplace** link to the plugins of the hub's project.
+
 ## Theme sync
 
-The light/dark mode and the color theme stay the same in the hub and in the app, in both directions. If you change the theme in the app, the app sends a `hub:theme` message to the hub. If the hub sends `hub:theme`, the app applies it.
+The light/dark mode and the color theme stay the same in the hub and in the app, in both directions. The theme picker lists the hub's themes, including your own.
 
 ## Forwarded keys
 

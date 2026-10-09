@@ -1,0 +1,61 @@
+---
+title: Your memory at the user scope
+description: Open the user scope to see the memory that every session loads, whatever the project, on one Home page.
+---
+
+import Shot from '../../../kit/Shot.astro';
+import Lightbox from '../../../kit/Lightbox.astro';
+
+The user scope shows only the memory that Claude Code loads in every session, whatever the project: managed policy, your user `CLAUDE.md`, user rules, your output style, user skills and agents, and subagent memory. It has no project files and no auto memory.
+
+## Open the user scope
+
+Use one of these:
+
+- Click the logo in the top bar.
+- In the project picker (<kbd>Shift+P</kbd>), pick **User (no project)**. It is the first row.
+- Start the app for the first time. With no recent project in the browser, the app opens the user scope.
+
+The top bar then shows the user scope in place of a project name. To go back to a project, pick it in the project picker or click one of the chips under **Open a project** on Home.
+
+## Home
+
+In the user scope, the app opens on **Your memory**, a page of cards in place of the file view.
+
+<Shot themed="h3f-hub-memory-home" alt="The user scope Home with the loaded-into-every-session bar and cards for managed policy, user CLAUDE.md, output style, skills and agents, memory settings, rules, subagent memory and health" />
+
+At the top, **Loaded into every session** shows the total chars that load in each session, with one colored part for each source:
+
+- Policy
+- `CLAUDE.md` and its imports
+- Always-on rules
+- Output style
+- Skill descriptions
+- Agent descriptions
+
+The total comes from files on disk. A built-in output style has no file, so the legend says it is not counted.
+
+## The cards
+
+| Card | What it shows |
+| --- | --- |
+| **Managed policy** | The managed policy `CLAUDE.md`, the managed settings and the keys they set, and the chars of a `claudeMd` value in those settings. Settings that come from the claude.ai admin console show **from claude.ai**. |
+| **User CLAUDE.md** | Its path, lines, chars and imports, with the import tree. |
+| **Output style** | The style name, its size, where it is set (user settings, managed settings, or the default) and `keep-coding-instructions`. |
+| **User skills and agents** | The skills and agents with the longest descriptions, because Claude Code lists every description in each session. |
+| **Memory settings** | The effective value of `autoMemoryEnabled`, `autoMemoryDirectory`, `claudeMdExcludes`, `cleanupPeriodDays` and `DISABLE_AUTO_MEMORY`, and where each value comes from. |
+| **User rules** | Rules that always load, and rules that load when a file matches their `paths`. |
+| **Subagent memory** | Each subagent with user memory, and how full its `MEMORY.md` is out of the 200-line limit. A bar near the limit turns to a warning color. |
+| **Health · user scope** | The open findings of the last [analysis](/claude-code-memory/guides/analyze/#analyze-the-user-scope), or a note that you have not run one. |
+
+Click a card or a row to open that file. The tree then shows only the group of that file, with a `Home › <group>` path above it. Click **show all** to see every group again, or click **Home** to go back.
+
+A settings file or an output style file opens read-only, because it is not a memory file.
+
+To go back to Home from a file, press <kbd>Esc</kbd>.
+
+## Under Claude Code Hub
+
+When the hub offers Marketplace, the **User skills and agents** card has an **Open Marketplace** link, because plugins add skills and agents too. See [Run inside Claude Code Hub](/claude-code-memory/reference/hub/).
+
+<Lightbox />

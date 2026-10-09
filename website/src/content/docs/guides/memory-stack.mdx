@@ -18,12 +18,13 @@ The app builds the list in this order:
 4. Project `CLAUDE.md` files, in the project directory and each parent directory
 5. Nested `CLAUDE.md` files in subdirectories of the project
 6. Project rules
-7. Project skills
-8. Auto memory
-9. Agent memory
-10. Files that the files above import
+7. User and project skills
+8. User and project agents
+9. Auto memory
+10. Agent memory
+11. Files that the files above import
 
-The tree groups the results as Managed Policy, User, Project, Rules, Auto Memory, Skills, and Agent Memory. Each group header shows the number of top-level files in the group.
+The tree groups the results as Managed Policy, User, Project, Rules, Auto Memory, Skills, Agents, and Agent Memory. Each group header shows the number of top-level files in the group.
 
 ## Load types
 
@@ -47,7 +48,7 @@ User-level files live in the Claude config directory, `~/.claude` by default. Th
 
 ## Managed policy
 
-An administrator can put a `CLAUDE.md` at a fixed system path. Its load type is always.
+An administrator can put a `CLAUDE.md` at a fixed system path. Its load type is always. Managed settings from the same folder, or from the claude.ai admin console, show on the [user scope Home](/claude-code-memory/guides/home/).
 
 | OS | Path |
 | --- | --- |
@@ -87,17 +88,23 @@ A rule with a non-empty `paths` list in its frontmatter is conditional. A rule w
 
 <Shot themed="h3d-hub-memory-rule" alt="A project rule open in the file view, with its paths frontmatter shown as badges" />
 
-## Project skills
+## Skills
 
-The app lists each `SKILL.md` under `<project>/.claude/skills/`, up to 4 levels deep. It also finds `.claude/skills` folders in project subdirectories and names those skills `<subdir>:<name>`. The skill name comes from the `name` frontmatter field, or else from the folder name.
+The app lists each `SKILL.md` under `<config dir>/skills/` and `<project>/.claude/skills/`, up to 4 levels deep. It also finds `.claude/skills` folders in project subdirectories and names those skills `<subdir>:<name>`. The skill name comes from the `name` frontmatter field, or else from the folder name.
 
-Skills are on-demand. Claude Code loads a skill body only when it uses the skill. The app does not scan user skills in `<config dir>/skills`.
+Skills are on-demand. Claude Code loads a skill body only when it uses the skill.
+
+## Agents
+
+The app lists each subagent definition, a `.md` file under `<config dir>/agents/` or `<project>/.claude/agents/`. The agent name comes from the `name` frontmatter field, or else from the file name.
+
+Agents are on-demand. Claude Code lists the name and description of each agent in every session, and loads the body only when the agent runs.
 
 ## Auto memory
 
 Claude Code keeps auto memory for each project in `<projects base>/<encoded path>/memory/`.
 
-The projects base is `<config dir>/projects`. If `autoMemoryDirectory` is set in `<config dir>/settings.json`, the app uses that folder instead. It reads this setting from user settings only, not from project settings.
+The projects base is `<config dir>/projects`. If `autoMemoryDirectory` is set in managed settings or in `<config dir>/settings.json`, the app uses that folder instead. Managed settings win. Like Claude Code, the app does not read this setting from project settings.
 
 To encode the project path, the app changes each `\`, `/`, and `:` to `-`. For example, `C:\Users\foo` becomes `C--Users-foo`.
 
@@ -133,7 +140,7 @@ The app reads each file for references to other files:
 
 A path that starts with `~` resolves from your home directory. Other paths resolve from the folder of the file that holds the reference.
 
-Imported files show under their parent with the load type import. Linked files show under their parent with the load type link. Topic files in a memory folder that MEMORY.md links to show under MEMORY.md and keep the on-demand type. The app follows imports and links up to 5 levels deep. When a target file does not exist, the file view lists the reference as unresolved and marks it with ⚠.
+Imported files show under their parent with the load type import. Linked files show under their parent with the load type link. Topic files in a memory folder that MEMORY.md links to show under MEMORY.md and keep the on-demand type. The app follows imports and links up to 4 levels deep, as Claude Code does. When a target file does not exist, the file view lists the reference as unresolved and marks it with ⚠.
 
 ## Footprint
 
@@ -144,7 +151,7 @@ The Memory sources bar at the top and the summary cards at the bottom show the s
 - Nested `CLAUDE.md` files with the tree load type, and the files they import
 - On-demand topic files in auto memory and agent memory
 
-For each skill, the count adds the characters of its name and description, because those go into every session. A skill with `disable-model-invocation: true` adds nothing.
+For each skill, the count adds the characters of its name and description, because those go into every session. A skill with `disable-model-invocation: true` adds nothing. For each agent, the count adds the characters of its name and description in the same way.
 
 The bar shows characters and bytes, with one colored segment per group. The cards show Files, Chars, Bytes, and Always loaded. Always loaded counts files with the always or startup load type. The app does not estimate tokens. To use the bar, see [See the memory footprint](/claude-code-memory/guides/browse/#see-the-memory-footprint).
 

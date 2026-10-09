@@ -20,7 +20,8 @@ The tree puts files in groups, in this order:
 4. Rules
 5. Auto Memory
 6. Skills
-7. Agent Memory
+7. Agents
+8. Agent Memory
 
 A group shows only when it has files. The number after a group name is its file count. Each row shows a load icon, the file name, and the line count, for example `42L`. Hover over the icon to see the load type. For what each icon means, see [Load types](/claude-code-memory/guides/memory-stack/#load-types).
 
@@ -94,7 +95,7 @@ The app removes each bullet line `- [name](file.md)` whose target file is missin
 ## Switch projects
 
 1. Click the project name with the folder icon in the top bar, or press <kbd>Shift+P</kbd>.
-2. In **Switch Project**, type to filter the list of recent projects. The current project has a `current` tag.
+2. In **Switch Project**, type to filter the list of recent projects. The current project has a `current` tag. The first row, **User (no project)**, opens the [user scope](/claude-code-memory/guides/home/).
 3. Use <kbd>↓</kbd> or <kbd>Ctrl+N</kbd> and <kbd>↑</kbd> or <kbd>Ctrl+P</kbd> to move, then press <kbd>Enter</kbd>. You can also click a project.
 
 To open a project that is not in the list, click **+ Add path...**, type the full path of the project directory, and click **Switch**. <kbd>Esc</kbd> goes back to the list. If the directory does not exist, the app shows `directory not found`.
@@ -104,7 +105,7 @@ The list keeps up to 20 recent projects for each Claude config directory. Click 
 ## Change the layout and theme
 
 - Drag the edge between the tree and the file view to resize the tree. The width is between 150 px and half of the window. The app saves the width.
-- Click the palette button in the top bar to pick one of 17 color themes: Ember (the default), Gruvbox, Catppuccin, Tokyo Night, Solarized, Dracula, Nord, Rosé Pine, Everforest, Kanagawa, One Dark, Night Owl, Monokai Pro, GitHub, Ayu, Vitesse, and Synthwave '84.
+- Click the palette button in the top bar to pick one of 17 color themes: Ember (the default), Gruvbox, Catppuccin, Tokyo Night, Solarized, Dracula, Nord, Rosé Pine, Everforest, Kanagawa, One Dark, Night Owl, Monokai Pro, GitHub, Ayu, Vitesse, and Synthwave '84. Inside Claude Code Hub, the picker lists the hub's themes instead.
 - Click the sun button, or press <kbd>t</kbd>, to switch between light and dark. Dark is the default.
 
 The browser saves the theme and the light or dark mode.

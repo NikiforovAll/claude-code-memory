@@ -24,7 +24,7 @@ export default defineConfig({
 			},
 			sidebar: [
 				{ label: 'Start here', items: [{ label: 'Getting started', slug: 'getting-started' }] },
-				{ label: 'Guides', items: [{ label: 'What Claude Code loads', slug: 'guides/memory-stack' }, { label: 'Browse memory files', slug: 'guides/browse' }, { label: 'Analyze memory with Claude', slug: 'guides/analyze' }] },
+				{ label: 'Guides', items: [{ label: 'What Claude Code loads', slug: 'guides/memory-stack' }, { label: 'Browse memory files', slug: 'guides/browse' }, { label: 'Your memory at the user scope', slug: 'guides/home' },{ label: 'Analyze memory with Claude', slug: 'guides/analyze' }] },
 				{ label: 'Reference', items: [{ label: 'Keyboard shortcuts', slug: 'reference/shortcuts' }, { label: 'CLI and configuration', slug: 'reference/configuration' },{ label: 'Run inside Claude Code Hub', slug: 'reference/hub' }, { label: 'Troubleshooting', slug: 'reference/troubleshooting' }] },
 			],
 		}),
