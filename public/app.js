@@ -672,7 +672,7 @@ function renderTree() {
     const fp = footprintHighlight && footprintHit(item) ? ' fp-hit' : '';
     let h = `<div class="tree-item${sel}${indent ? ' tree-child' : ''}${isConditional ? ' tree-conditional' : ''}${muted}${fp}" data-id="${esc(item.id)}" title="${esc(item.path)}" onclick="selectFile('${escAttrJs(item.id)}')"${pad}>`;
     h += chevron;
-    h += `<span class="load-icon" title="${loadTitle}" style="color:var(--scope-${item.scope})">${loadIcon}</span>`;
+    h += `<span class="load-icon" title="${loadTitle}" style="color:color-mix(in srgb, var(--scope-${item.scope}) var(--glyph-mix), #000)">${loadIcon}</span>`;
     h += `<span class="file-name">${esc(item.name)}</span>`;
     const hs = treeHealth.get(item.id);
     if (hs) {
@@ -701,7 +701,7 @@ function renderTree() {
     const chevron = collapsible ? `<span class="group-chevron">${collapsed ? '\u25B8' : '\u25BE'}</span>` : '';
     const headerClass = collapsible ? 'tree-group-header tree-group-clickable' : 'tree-group-header';
     const onclick = collapsible ? ` onclick="_toggleGroup('${escAttrJs(scope)}')"` : '';
-    html += `<div class="${headerClass}" data-scope="${esc(scope)}"${onclick}>${chevron}<span class="scope-dot" style="color:var(--scope-${scope})">\u25CF</span> ${esc(label)} <span style="opacity:0.5">${items.length}</span></div>`;
+    html += `<div class="${headerClass}" data-scope="${esc(scope)}"${onclick}>${chevron}<span class="scope-dot" style="color:color-mix(in srgb, var(--scope-${scope}) var(--glyph-mix), #000)">\u25CF</span> ${esc(label)} <span style="opacity:0.5">${items.length}</span></div>`;
     if (collapsed) continue;
     if (scope === 'agent-memory') {
       const sorted = [...items].sort((a, b) => {
@@ -1536,6 +1536,10 @@ function scopeBadge(f) {
   return `<span class="scope-tag t-${esc(f.scope)}" title="${esc(title)}">${esc(f.scope)}</span>`;
 }
 
+function sevLabel(f) {
+  return `<span class="sev-label">${esc(f.severity)}</span>`;
+}
+
 function copyText(text, okMsg) {
   navigator.clipboard
     .writeText(text)
@@ -1747,11 +1751,12 @@ function renderHealthDash(st, shown) {
   const dirty = new Set(findings.flatMap((f) => (f.files || []).flatMap((n) => findingFileIds(n, f.scope))));
   const clean = audited.filter((s) => !dirty.has(s.id)).length;
   const score = healthScore(findings);
-  const scoreColor = score >= 80 ? 'var(--success)' : score >= 50 ? 'var(--warning)' : 'var(--error)';
+  const scoreTone = score >= 80 ? 'success' : score >= 50 ? 'warning' : 'error';
+  const scoreColor = `var(--${scoreTone})`;
   const CIRC = 163.4; // 2πr for r=26
   let html = '<div class="hv-tiles">';
   html += '<div class="hv-tile hv-ring-tile">';
-  html += `<div class="hv-ring"><svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-hover)" stroke-width="6"/><circle cx="32" cy="32" r="26" fill="none" stroke="${esc(scoreColor)}" stroke-width="6" stroke-linecap="round" transform="rotate(-90 32 32)" stroke-dasharray="${CIRC}" stroke-dashoffset="${esc((CIRC * (100 - score)) / 100)}"/></svg><span class="hv-ring-val" style="color:${scoreColor}">${score}</span></div>`;
+  html += `<div class="hv-ring"><svg width="64" height="64" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--bg-hover)" stroke-width="6"/><circle cx="32" cy="32" r="26" fill="none" stroke="${esc(scoreColor)}" stroke-width="6" stroke-linecap="round" transform="rotate(-90 32 32)" stroke-dasharray="${CIRC}" stroke-dashoffset="${esc((CIRC * (100 - score)) / 100)}"/></svg><span class="hv-ring-val" style="color:var(--${scoreTone}-ink)">${score}</span></div>`;
   html += `<div class="hv-tile-txt" title="Score = 100 − 10/high − 3/med − 1/low"><span class="hv-lbl">Health</span><span class="hv-sub">of 100</span></div></div>`;
   for (const [sev, label] of [
     ['high', 'High'],
@@ -1814,7 +1819,7 @@ function renderMemoryMap(shown) {
     const title = `${s.name} — ${s.lines}L${n ? ` · ${n} finding${n > 1 ? 's' : ''} (worst: ${sev})` : ' · clean'}`;
     html += `<div class="hv-cell hv-${esc(sev)}${analysisFileFilter?.id === s.id ? ' active' : ''}" onclick="_setFileFilter('${escAttrJs(s.id)}','${escAttrJs(s.name)}')" title="${esc(title)} — click to filter findings">`;
     if (n) html += `<span class="hv-cell-n hv-cn-${esc(sev)}">${n}</span>`;
-    html += `<span class="hv-cell-name">${esc(s.name)}</span><span class="hv-cell-meta">${s.lines}L</span></div>`;
+    html += `<span class="hv-cell-name">${esc(s.name)}</span><span class="hv-cell-meta">${s.lines} lines</span></div>`;
   }
   html += '</div>';
   return html;
@@ -1832,6 +1837,7 @@ function renderFileFindings(source) {
   for (const [f, i] of hits) {
     html += `<div class="analysis-card pf-card ${esc(`sev-${f.severity}`)}">`;
     html += `<div class="analysis-card-head" onclick="this.parentElement.classList.toggle('expanded')">`;
+    html += sevLabel(f);
     html += `<span class="kind-badge ${esc(`kind-${f.kind}`)}">${esc(f.kind)}</span>`;
     html += scopeBadge(f);
     html += `<span class="analysis-card-title">${esc(f.title)}</span>`;
@@ -1983,7 +1989,9 @@ function renderAnalysis(st) {
     return html;
   }
   const r = shown.result;
-  analysisFindings = r.findings || [];
+  analysisFindings = [...(r.findings || [])].sort(
+    (a, b) => (SEV_ORDER[a.severity] ?? 3) - (SEV_ORDER[b.severity] ?? 3),
+  );
   const byName = Object.fromEntries(stackData.map((s) => [s.name, s]));
   html += renderHealthDash(st, shown);
   if (r.summary) html += `<div class="analysis-summary">${esc(r.summary)}</div>`;
@@ -2022,6 +2030,7 @@ function renderAnalysis(st) {
     html += `<div class="analysis-card ${esc(`sev-${f.severity}`)}">`;
     html += '<div class="analysis-card-head">';
     html += `<input type="checkbox" class="fix-check" ${fixSelected.has(findingKey(f)) ? 'checked ' : ''}onclick="_toggleFixSelect(${idx})" title="Queue for the fix plan">`;
+    html += sevLabel(f);
     html += `<span class="kind-badge ${esc(`kind-${f.kind}`)}">${esc(f.kind)}</span>`;
     html += scopeBadge(f);
     html += `<span class="analysis-card-title">${esc(f.title)}</span>`;
