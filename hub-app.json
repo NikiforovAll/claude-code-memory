@@ -4,6 +4,29 @@
   "name": "Memory Diagnoser",
   "icon": "database",
   "run": { "entry": "server.js", "defaultPort": 3544 },
+  "plugin": { "marketplace": "plugin", "name": "memory-diagnoser" },
+  "listing": {
+    "tagline": "Ask Claude what the memory analysis found",
+    "description": "A skill that lets Claude read the Memory Diagnoser's saved analysis of your CLAUDE.md files, rules and auto memory. Ask \"what did the memory analysis find for this project?\" or run /memory-diagnoser:memory-analysis. Claude answers with the health score and each finding: its files, the evidence and a suggested fix. Use it before you clean up memory files. The skill only reads saved runs; you start an analysis in the Memory Diagnoser. Kanbot on the Kanban board has the skill with no install.",
+    "tags": ["skill", "memory", "cli"],
+    "homepage": "https://nikiforovall.blog/claude-code-memory/",
+    "screenshots": [
+      {
+        "url": "https://nikiforovall.blog/claude-code-memory/shots/themes/ember-memory-analysis-light.webp",
+        "alt": "The Memory Diagnoser's analysis view: the health score and the findings, each with its severity, files and suggested fix",
+        "title": "Analysis",
+        "caption": "The saved run the skill reads: the health score and each finding."
+      },
+      {
+        "url": "https://nikiforovall.blog/claude-code-memory/shots/themes/ember-h3-hub-memory-light.webp",
+        "alt": "The Memory Diagnoser in the hub: the tree of memory sources and the preview of one file",
+        "title": "Memory stack",
+        "caption": "The files the analysis audits: CLAUDE.md, rules and auto memory."
+      }
+    ],
+    "author": "NikiforovAll",
+    "license": "MIT"
+  },
   "loading": {
     "verbs": [
       "Recalling memories…",

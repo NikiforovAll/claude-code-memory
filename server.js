@@ -9,6 +9,8 @@ const { execFileSync, spawn } = require('node:child_process');
 const crypto = require('node:crypto');
 const { assertOpenTarget, openInEditor } = require('./lib/open-editor');
 const { createNetGuard } = require('./lib/net-guard');
+const { createAnalysisStore, encodeProjectPath, EMPTY_ANALYSIS, USER_SCOPE } = require('./lib/analysis-store');
+const { DEFAULT_CLAUDE_DIR, expandHome, resolveClaudeDir } = require('./lib/claude-dir');
 
 // #region CLI_ARGS
 
@@ -20,13 +22,9 @@ function getArg(name) {
   return process.argv[eqIdx + 1] || null;
 }
 
-const expandHome = (p) => (typeof p === 'string' ? p : '').replace(/^~/, os.homedir());
-
 const PORT = getArg('port') || process.env.PORT || 3544;
 const AUTO_OPEN = process.argv.includes('--open');
-const claudeDirArg = getArg('dir') || process.env.CLAUDE_CONFIG_DIR || process.env.CLAUDE_DIR;
-const DEFAULT_CLAUDE_DIR = path.join(os.homedir(), '.claude');
-const CLAUDE_DIR = claudeDirArg ? expandHome(claudeDirArg) : DEFAULT_CLAUDE_DIR;
+const CLAUDE_DIR = resolveClaudeDir(getArg('dir'));
 const USER_CLAUDE_MD = path.join(CLAUDE_DIR, 'CLAUDE.md');
 // Claude Code keeps .claude.json beside ~/.claude by default but inside CLAUDE_CONFIG_DIR
 // when that is set, so the default dir must stay unset for the CLI rather than be spelled out.
@@ -594,14 +592,6 @@ function findMainWorktreePath(projectPath) {
   }
 }
 
-function encodeProjectPath(projectPath) {
-  // Claude Code encoding: `:` and `/` both become `-`, so `C:\Users\foo` → `C--Users-foo`
-  return projectPath
-    .replace(/\\/g, '/')
-    .replace(/:/g, '-')
-    .replace(/\//g, '-');
-}
-
 // Managed, then user `autoMemoryDirectory` — Claude Code rejects this key from project/local settings for security.
 function getProjectsBaseDir() {
   const raw = readJson(managedSettingsPath())?.autoMemoryDirectory || readJson(USER_SETTINGS_PATH)?.autoMemoryDirectory;
@@ -780,67 +770,8 @@ const ANALYSIS_SCHEMA = {
   required: ['summary', 'findings'],
 };
 
-// Analysis state lives in one file per project under ~/.claude/memory-analysis/,
-// named by the same path encoding Claude Code uses for its projects dir. Disk is the
-// single source of truth — in-flight runs are persisted as `pending` entries so they
-// survive page reloads and are visible to other server instances (hub + standalone).
-const ANALYSIS_DIR = path.join(CLAUDE_DIR, 'memory-analysis');
-
-const EMPTY_ANALYSIS = { pending: [], result: null, error: null, hash: null, ts: null, ids: null, runs: [], dismissed: [] };
+const { get: getAnalysisState, save: saveAnalysisState } = createAnalysisStore(CLAUDE_DIR);
 const MAX_ANALYSIS_RUNS = 10;
-
-// Findings about the user-level CLAUDE.md are shared across projects: they live in
-// their own entry so any project's view (and dismissals) sees the same audit.
-// The sentinel contains ':' mid-string, which encodeProjectPath output never keeps,
-// so it cannot collide with a real project file.
-const USER_SCOPE = '::user::';
-
-function analysisFile(project) {
-  if (project === USER_SCOPE) return path.join(ANALYSIS_DIR, 'user-scope.json');
-  return path.join(ANALYSIS_DIR, `${encodeProjectPath(project)}.json`);
-}
-
-// A pending entry whose server died mid-run would otherwise show as running forever.
-// Instead of deleting it (losing the trace), mark it stalled: the UI stops spinning
-// but the entry survives — if its run ever completes, the completion handler still
-// removes it by id and the result surfaces. Runs are never killed, so stalled is a
-// hint ("probably orphaned by a server restart"), not a verdict.
-const PENDING_STALL_MS = 1_800_000;
-function markStalePending(pending) {
-  const cutoff = Date.now() - PENDING_STALL_MS;
-  return (pending || []).map((p) => (p.startedAt > cutoff ? p : { ...p, stalled: true }));
-}
-
-function getAnalysisState(project) {
-  let st = null;
-  try {
-    st = JSON.parse(fs.readFileSync(analysisFile(project), 'utf-8'));
-  } catch {
-    return { ...EMPTY_ANALYSIS };
-  }
-  const loaded = { ...EMPTY_ANALYSIS, ...st };
-  loaded.pending = markStalePending(loaded.pending);
-  // result/ts/hash/ids are a projection of the newest run — derived here so no
-  // writer can persist them out of sync with the runs history.
-  const latest = (loaded.runs || [])[0];
-  loaded.result = latest?.result || null;
-  loaded.ts = latest?.ts || null;
-  loaded.hash = latest?.hash || null;
-  loaded.ids = latest ? latest.ids : null;
-  return loaded;
-}
-
-function saveAnalysisState(project, st) {
-  const { pending = [], error = null, runs = [], dismissed = [] } = st;
-  try {
-    if (!pending.length && !error && !runs.length && !dismissed.length) {
-      fs.rmSync(analysisFile(project), { force: true });
-      return;
-    }
-    fs.mkdirSync(ANALYSIS_DIR, { recursive: true });
-    fs.writeFileSync(analysisFile(project), JSON.stringify({ pending, error, runs, dismissed }), 'utf-8');
-  } catch { /* best-effort persistence */ }
-}
 
 function memoryContentHash(sources) {
   const h = crypto.createHash('sha1');
@@ -1528,8 +1459,29 @@ app.get('/api/imports', (req, res) => {
 
 // #region STARTUP
 
+const SERVER_FILE = path.join(CLAUDE_DIR, '.memory', 'server.json');
+
+// cck reads `script` to name the CLI to Kanbot, since under the hub it is not on PATH. A killed
+// server leaves the file behind, so readers check the pid.
+function writeServerFile(port) {
+  try {
+    fs.mkdirSync(path.dirname(SERVER_FILE), { recursive: true });
+    fs.writeFileSync(SERVER_FILE, JSON.stringify({ pid: process.pid, port, script: path.join(__dirname, 'bin.js') }));
+  } catch (err) {
+    console.warn('[Startup] cannot write server.json:', err.message);
+  }
+}
+
+process.on('exit', () => {
+  try {
+    if (JSON.parse(fs.readFileSync(SERVER_FILE, 'utf8')).pid === process.pid) fs.unlinkSync(SERVER_FILE);
+  } catch {}
+});
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => process.exit(0));
+
 const onReady = (port) => {
   console.log(`Memory Diagnoser running at http://localhost:${port}`);
+  writeServerFile(port);
   console.log(`Project: ${currentProjectPath}`);
   const warning = net.exposureWarning();
   if (warning) console.log(warning);

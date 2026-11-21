@@ -24,6 +24,33 @@ The package is `claude-code-memory-explorer`. It needs Node.js 20 or later.
 
 To look at a different project, use the project picker. Click the folder button in the top bar, or press <kbd>Shift+P</kbd>. The browser remembers the last project you picked and opens it on the next load, in place of the start project. A `?project=/path` query in the URL also switches the project. See [Switch projects](/claude-code-memory/guides/browse/#switch-projects).
 
+## Commands
+
+A command prints saved analysis results and exits. It needs no running dashboard, and it starts no analysis.
+
+| Command | What it prints |
+| --- | --- |
+| `projects` | The projects that have analysis results, each with its health score, finding counts, number of runs and the time of the latest run. |
+| `analysis [<project>]` | The findings of one run of a project. `<project>` is a path, a folder name or a part of one. Without it, the command uses the current directory. |
+| `help [<command>]` | The commands, or the flags of one command. |
+
+```bash
+npx claude-code-memory-explorer projects
+npx claude-code-memory-explorer analysis my-app --severity high
+```
+
+Flags of `analysis`:
+
+| Flag | What it does |
+| --- | --- |
+| `--user` | Shows the user scope in place of a project. |
+| `--run <n>` | Shows run `n`. Run 1 is the latest and the default. |
+| `--severity <level>` | Shows only `high`, `med` or `low` findings. |
+| `--kind <kind>` | Shows only one kind of finding, such as `stale`. |
+| `--dismissed` | Includes the findings that you dismissed in the dashboard. |
+
+Both commands take `--dir <path>` for the config dir and `--json` for JSON output. The command shows one run. The dashboard also merges runs; the command does not.
+
 ## Environment variables
 
 | Variable | What it does |
@@ -93,6 +120,7 @@ The app caches the scan for 30 seconds. Press <kbd>r</kbd> to scan again now.
 
 Browsing changes nothing. The app writes to disk only in these cases:
 
+- **Start.** Writes `<config dir>/.memory/server.json` with the process id, the port and the path of the app's script, and removes it on exit. Other tools read it to find the running app and its commands.
 - **Delete file.** Removes the file after you confirm.
 - **Cleanup orphaned refs.** Rewrites a `MEMORY.md` and removes the `- [name](file.md)` lines whose target file does not exist.
 - **Analyze.** Saves runs and dismissed findings in `<config dir>/memory-analysis/`, one file for each project and one that all projects share for the user `CLAUDE.md`. See [Analyze memory with Claude](/claude-code-memory/guides/analyze/).

@@ -22,6 +22,12 @@ Single-file Express backend + vanilla JS frontend. No build step, no framework.
   1. **Filesystem scanning** (`discoverMemorySources`) — walks `~/.claude/`, ancestor directories, project `.claude/rules/`, and auto memory dirs to build the full memory source stack
   2. **API endpoints** — `/api/stack`, `/api/summary`, `/api/file`, `/api/rules/match`, `/api/imports` etc.
   3. **Analyzer** (the `ANALYZER` region, the largest block in the file) — runs headless `claude -p` audits of the memory stack with reviewer subagents, persists each run per project, and serves them over `/api/memory/analyze`, `/api/memory/analysis`, `/api/memory/analysis/dismiss`, and `/api/memory/analysis/delete-run`
+- **`bin.js`** — the package bin. A first argument that is a command (`projects`, `analysis`, `help`) runs `lib/cli.js`; anything else starts `server.js`.
+- **`lib/cli.js`** — read-only commands over the saved analysis runs, with a `COMMANDS` table that the help prints from. It needs no running server and starts no analysis. Agents read the help (cck's Kanbot is pointed at it), so keep each line short; a new command or flag goes in the table and in the website's `reference/configuration.md`.
+- **`lib/analysis-store.js`** — reads and writes `<config dir>/memory-analysis/<encoded path>.json`, shared by the server and the CLI. A saved file carries `project`, the real path, because the encoded name cannot be decoded.
+- **`lib/claude-dir.js`** — the config dir order (`--dir`, `CLAUDE_CONFIG_DIR`, `CLAUDE_DIR`, `~/.claude`), shared by the server and the CLI.
+- **`<config dir>/.memory/server.json`** — `{pid, port, script}`, written on ready and removed on exit. cck reads it to find the CLI when the app runs under the hub, where the bin is not on PATH.
+- **`plugin/`** — a Claude Code marketplace with one plugin, `memory-diagnoser`, whose `memory-analysis` skill wraps the CLI. It is not installed by default. cck loads it into Kanbot with `--plugin-dir` from `plugin/plugins/memory-diagnoser`, so that path and the plugin name must stay. The skill points at the help and names only the finding filters; a new command gets a row in its table.
 - **`public/app.js`** — SPA with tree panel (left) + preview panel (right) split layout. Fetches from API, renders tree grouped by scope, shows syntax-highlighted preview with frontmatter badges and clickable `@import` links.
 - **`public/style.css`** — CSS variables on `:root` (dark default), `body.light` overrides. Scope colors: user=blue, project=green, local=yellow, rule=purple, memory=orange, policy=red.
 

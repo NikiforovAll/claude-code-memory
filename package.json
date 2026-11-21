@@ -5,7 +5,7 @@
   "main": "server.js",
   "type": "commonjs",
   "bin": {
-    "claude-code-memory-explorer": "server.js"
+    "claude-code-memory-explorer": "bin.js"
   },
   "scripts": {
     "start": "node server.js",
@@ -46,9 +46,11 @@
   "author": "NikiforovAll",
   "license": "MIT",
   "files": [
+    "bin.js",
     "server.js",
     "hub-app.json",
     "lib/",
+    "plugin/",
     "public/",
     "README.md",
     "LICENSE"

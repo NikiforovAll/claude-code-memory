@@ -1,0 +1,14 @@
+{
+  "name": "memory-diagnoser",
+  "owner": {
+    "name": "NikiforovAll"
+  },
+  "description": "The plugin that ships with Claude Code Memory Diagnoser",
+  "plugins": [
+    {
+      "name": "memory-diagnoser",
+      "source": "./plugins/memory-diagnoser",
+      "description": "A skill to read the Memory Diagnoser's saved analysis results from a session"
+    }
+  ]
+}

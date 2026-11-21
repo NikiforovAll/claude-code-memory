@@ -67,6 +67,10 @@ The app has no authentication. Bind a non-loopback address only on a network you
 
 To look at a different project, use the project picker (<kbd>Shift</kbd>+<kbd>P</kbd>) or add `?project=/path` to the URL. The pencil button and <kbd>e</kbd> run the editor in `EDITOR`, or `code` when it is not set. Analyze saves its runs in `<config dir>/memory-analysis/`.
 
+Two commands print saved analysis results without the dashboard: `claude-code-memory-explorer projects` lists the projects that have results, and `claude-code-memory-explorer analysis [<project>]` prints the findings of one. `claude-code-memory-explorer help` lists the flags.
+
+To let a Claude Code session use these commands, install the skill from the package folder: `claude plugin marketplace add <package folder>/plugin`, then `claude plugin install memory-diagnoser@memory-diagnoser`.
+
 For all options and the files the app reads and writes, see [CLI and configuration](https://nikiforovall.blog/claude-code-memory/reference/configuration/). For common problems, see [Troubleshooting](https://nikiforovall.blog/claude-code-memory/reference/troubleshooting/).
 
 ## License
