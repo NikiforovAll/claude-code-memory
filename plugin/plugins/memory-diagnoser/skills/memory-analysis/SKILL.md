@@ -1,7 +1,8 @@
 ---
 name: memory-analysis
-description: Read the Memory Diagnoser's saved analysis of Claude Code memory (CLAUDE.md, rules, auto memory) — which projects have results, a project's health score and its findings. Use when the user asks what the memory analysis found, or before a fix of memory files.
+description: Read the Memory Diagnoser's saved analysis of Claude Code memory (CLAUDE.md, rules, auto memory) — which projects have results, a project's health score and its findings.
 argument-hint: '[projects|analysis] [project] [flags]'
+disable-model-invocation: true
 ---
 
 # Memory analysis

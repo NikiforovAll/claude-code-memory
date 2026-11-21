@@ -7,7 +7,7 @@
   "plugin": { "marketplace": "plugin", "name": "memory-diagnoser" },
   "listing": {
     "tagline": "Ask Claude what the memory analysis found",
-    "description": "A skill that lets Claude read the Memory Diagnoser's saved analysis of your CLAUDE.md files, rules and auto memory. Ask \"what did the memory analysis find for this project?\" or run /memory-diagnoser:memory-analysis. Claude answers with the health score and each finding: its files, the evidence and a suggested fix. Use it before you clean up memory files. The skill only reads saved runs; you start an analysis in the Memory Diagnoser. Kanbot on the Kanban board has the skill with no install.",
+    "description": "A skill that lets Claude read the Memory Diagnoser's saved analysis of your CLAUDE.md files, rules and auto memory. Run /memory-diagnoser:memory-analysis with a question, such as \"what did the analysis find here?\". Claude answers with the health score and each finding: its files, the evidence and a suggested fix. You start an analysis in the Memory Diagnoser.",
     "tags": ["skill", "memory", "cli"],
     "homepage": "https://nikiforovall.blog/claude-code-memory/",
     "screenshots": [
