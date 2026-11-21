@@ -1540,11 +1540,28 @@ function sevLabel(f) {
   return `<span class="sev-label">${esc(f.severity)}</span>`;
 }
 
+// A frame without the clipboard-write permission rejects the async API; execCommand still works there.
+function copyTextLegacy(text) {
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(area);
+  const active = document.activeElement;
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {}
+  area.remove();
+  active?.focus?.();
+  return ok;
+}
+
 function copyText(text, okMsg) {
-  navigator.clipboard
-    .writeText(text)
-    .then(() => showToast(okMsg, 'info'))
-    .catch(() => showToast('Clipboard unavailable', 'error'));
+  const done = () => showToast(okMsg, 'info');
+  const legacy = () => (copyTextLegacy(text) ? done() : showToast('Clipboard unavailable', 'error'));
+  if (!navigator.clipboard?.writeText) return legacy();
+  navigator.clipboard.writeText(text).then(done, legacy);
 }
 
 function _copyFindingPrompt(idx) {
