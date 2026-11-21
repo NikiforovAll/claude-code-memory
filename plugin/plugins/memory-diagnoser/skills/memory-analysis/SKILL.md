@@ -1,16 +1,20 @@
 ---
 name: memory-analysis
-description: Read the Memory Diagnoser's saved analysis of Claude Code memory (CLAUDE.md, rules, auto memory) — which projects have results, a project's health score and its findings.
-argument-hint: '[projects|analysis] [project] [flags]'
+description: Answer a question about the Memory Diagnoser's saved analysis of Claude Code memory — which projects have results, a project's health score and its findings.
+argument-hint: '[question]'
 disable-model-invocation: true
 ---
 
 # Memory analysis
 
-The skill is a thin wrapper over the `claude-code-memory-explorer` CLI. Find the command in this order:
+Answer the user's question about the saved memory analysis with the `claude-code-memory-explorer` CLI. With no question, show `analysis` for the current folder.
 
-1. The command your system prompt names for the memory CLI, when it names one.
-2. `node "<script>"`, where `script` is in `<config dir>/.memory/server.json`. The config dir is `$CLAUDE_CONFIG_DIR`, else `~/.claude`. Put every path in quotes: on Windows it has backslashes. The file exists while the Memory Diagnoser runs, for example in Claude Code Hub.
+## Find the CLI
+
+Use the first that exists:
+
+1. The command your system prompt names for the memory CLI.
+2. When the Memory Diagnoser runs (for example in Claude Code Hub), it writes `<config dir>/.memory/server.json`. Read its `script` field, the path of the CLI, and run `node "<that path>"`. The config dir is `$CLAUDE_CONFIG_DIR`, else `~/.claude`. Quote the path: on Windows it has backslashes.
 3. `claude-code-memory-explorer` on PATH.
 4. `npx claude-code-memory-explorer`.
 
@@ -25,8 +29,8 @@ Run `help` first with the command you found. If it prints no command list, the i
 
 Both take `--json`. `help <command>` prints the other flags.
 
-## Rules
+## Answer
 
-- The commands only read saved runs. They start no analysis: the user runs one in the Memory Diagnoser.
-- A run can be old. Report its time, and read the named file before you act on a finding.
-- A finding names its files and a suggested fix. Change a memory file only when the user asks.
+- Report the time of the run with its findings. A run can be old: read the named file before you act on a finding.
+- No results, or results too old: the user starts a new analysis in the Memory Diagnoser. The CLI starts none.
+- Change a memory file only when the user asks.
